@@ -1,10 +1,10 @@
-name: Test Build Environment
+name: Build Turnip
 
 on:
   workflow_dispatch:
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-24.04
 
     steps:
@@ -20,25 +20,152 @@ jobs:
         run: |
           sdkmanager "ndk;28.2.13676358"
 
-      - name: Test Build Environment
+      - name: Install build dependencies
         run: |
-          echo "=== Host ==="
-          uname -a
+          sudo apt-get update
+          sudo apt-get install -y \
+            meson \
+            ninja-build \
+            pkg-config \
+            python3-mako \
+            python3-yaml \
+            python3-ply \
+            bison \
+            flex \
+            gettext \
+            git \
+            cmake \
+            ccache \
+            glslang-tools \
+            libexpat1-dev \
+            libelf-dev \
+            libdrm-dev \
+            zlib1g-dev \
+            libxml2-dev
+
+      - name: Clone Mesa
+        run: |
+          git clone --depth=1 \
+            https://gitlab.freedesktop.org/mesa/mesa.git \
+            mesa
+
+      - name: Show Mesa version
+        working-directory: mesa
+        run: |
+          git log -1 --oneline
+          grep '^project(' meson.build | head -1
+
+      - name: Create Android cross file
+        run: |
+          NDK="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+
+          cat > android-aarch64.txt <<EOF
+          [constants]
+          ndk = '$NDK'
+
+          [binaries]
+          ar = ndk / 'toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
+          c = ndk / 'toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang'
+          cpp = ndk / 'toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++'
+          c_ld = 'lld'
+          cpp_ld = 'lld'
+          strip = ndk / 'toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
+          pkg-config = ['env', 'PKG_CONFIG_LIBDIR=$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/pkgconfig']
+
+          [host_machine]
+          system = 'android'
+          cpu_family = 'aarch64'
+          cpu = 'armv8'
+          endian = 'little'
+          EOF
+
+      - name: Create native file
+        run: |
+          cat > native.txt <<'EOF'
+          [binaries]
+          c = 'clang'
+          cpp = 'clang++'
+          ar = 'llvm-ar'
+          strip = 'llvm-strip'
+          c_ld = 'lld'
+          cpp_ld = 'lld'
+
+          [host_machine]
+          system = 'linux'
+          cpu_family = 'x86_64'
+          cpu = 'x86_64'
+          endian = 'little'
+          EOF
+
+      - name: Configure Mesa
+        working-directory: mesa
+        run: |
+          meson setup build \
+            --cross-file ../android-aarch64.txt \
+            --native-file ../native.txt \
+            --prefix "$GITHUB_WORKSPACE/install" \
+            -Dbuildtype=release \
+            -Dstrip=true \
+            -Dplatforms=android \
+            -Dplatform-sdk-version=33 \
+            -Dandroid-stub=true \
+            -Dandroid-libbacktrace=disabled \
+            -Degl=disabled \
+            -Dglx=disabled \
+            -Dgallium-drivers= \
+            -Dvulkan-drivers=freedreno \
+            -Dfreedreno-kmds=kgsl \
+            -Dvulkan-beta=true \
+            -Dllvm=disabled
+
+      - name: Build Mesa
+        working-directory: mesa
+        run: |
+          meson compile -C build
+
+      - name: Install Mesa
+        working-directory: mesa
+        run: |
+          meson install -C build
+
+      - name: Check Turnip
+        run: |
+          echo "=== Build output ==="
+          find install -type f -name '*.so' -print
+
           echo
+          echo "=== Turnip ==="
+          ls -lh install/lib/libvulkan_freedreno.so
 
-          echo "=== CPU ==="
-          uname -m
-          echo
+          file install/lib/libvulkan_freedreno.so
 
-          echo "=== Android SDK ==="
-          echo "$ANDROID_SDK_ROOT"
-          echo
+      - name: Package Turnip
+        run: |
+          mkdir -p artifact
 
-          echo "=== NDK ==="
-          echo "$ANDROID_SDK_ROOT/ndk/28.2.13676358"
-          test -x "$ANDROID_SDK_ROOT/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+          cp install/lib/libvulkan_freedreno.so artifact/
 
-          echo
+          cat > artifact/meta.json <<'EOF'
+          {
+            "schemaVersion": 1,
+            "name": "MyTurnipZink",
+            "description": "Mesa Turnip Vulkan driver for Adreno",
+            "author": "IO-MC",
+            "packageVersion": "1",
+            "vendor": "Mesa",
+            "driverVersion": "Mesa 26.3-devel",
+            "minApi": 28,
+            "libraryName": "libvulkan_freedreno.so"
+          }
+          EOF
 
-          echo "=== Clang ==="
-          "$ANDROID_SDK_ROOT/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version
+          cd artifact
+          zip -9 ../MyTurnipZink-Turnip.zip \
+            libvulkan_freedreno.so \
+            meta.json
+
+      - name: Upload Turnip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyTurnipZink-Turnip
+          path: MyTurnipZink-Turnip.zip
