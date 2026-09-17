@@ -82,14 +82,19 @@ jobs:
           c_ld = 'lld'
           cpp_ld = 'lld'
           strip = ndk / 'toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
-          pkg-config = ['env', 'PKG_CONFIG_LIBDIR=$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/pkgconfig']
-
+          
           [host_machine]
           system = 'android'
           cpu_family = 'aarch64'
           cpu = 'armv8'
           endian = 'little'
           EOF
+          
+      - name: Prepare pkg-config
+        run: |
+          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_LIBDIR=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_ALLOW_CROSS=1" >> "$GITHUB_ENV"
           
       - name: Add NDK LLVM tools to PATH
         run: |
@@ -129,7 +134,7 @@ jobs:
             -Degl=enabled
             -Dgles2=enabled
             -Dgles1=disabled
-            -Dglx=dri
+            -Dglx=disabled
             -Degl-lib-suffix=_mesa
             -Dgles-lib-suffix=_mesa
             -Dshared-glapi=enabled
