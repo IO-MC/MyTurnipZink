@@ -137,6 +137,20 @@ jobs:
             -Dvulkan-beta=true \
             -Dllvm=disabled
 
+      - name: Check Zink configuration
+        working-directory: mesa
+        run: |
+          echo "=== Zink targets ==="
+          meson introspect build --targets | grep -i zink || true
+
+          echo
+          echo "=== Gallium drivers ==="
+          meson configure build | grep -i gallium || true
+
+          echo
+          echo "=== Zink ==="
+          meson configure build | grep -i zink || true
+
       - name: Build Mesa
         working-directory: mesa
         run: |
