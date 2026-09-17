@@ -126,15 +126,17 @@ jobs:
             -Dplatform-sdk-version=33 \
             -Dandroid-stub=true \
             -Dandroid-libbacktrace=disabled \
-            -Degl=enabled \
-            -Dgles2=enabled \
-            -Dgles1=disabled \
-            -Dglx=disabled \
-            -Dshared-glapi=enabled \
-            -Dgallium-drivers=zink \
-            -Dvulkan-drivers=freedreno \
-            -Dfreedreno-kmds=kgsl \
-            -Dvulkan-beta=true \
+            -Degl=enabled
+            -Dgles2=enabled
+            -Dgles1=disabled
+            -Dglx=dri
+            -Degl-lib-suffix=_mesa
+            -Dgles-lib-suffix=_mesa
+            -Dshared-glapi=enabled
+            -Dgallium-drivers=zink
+            -Dvulkan-drivers=freedreno
+            -Dfreedreno-kmds=kgsl
+            -Dvulkan-beta=true
             -Dllvm=disabled
 
       - name: Check Zink configuration
@@ -177,27 +179,58 @@ jobs:
 
       - name: Package Turnip + Zink
         run: |
-          mkdir -p artifact
+          rm -rf artifact
+          mkdir -p artifact/lib/dri
 
           echo "=== Copy Mesa libraries ==="
 
-          # Copy all Mesa shared libraries while preserving directories.
-          cd install
-          find . -type f \( -name '*.so' -o -name '*.so.*' \) -exec cp --parents {} ../artifact/ \;
+          # Turnip Vulkan driver
+          cp install/lib/libvulkan_freedreno.so \
+             artifact/libvulkan_freedreno.so
 
-          cd ../artifact
+          # Mesa EGL
+          cp install/lib/libEGL_mesa.so \
+             artifact/libEGL_mesa.so
+
+          # Mesa GLES, useful for Mesa runtime dependencies
+          if [ -f install/lib/libGLESv2_mesa.so ]; then
+            cp install/lib/libGLESv2_mesa.so \
+               artifact/libGLESv2_mesa.so
+          fi
+
+          # Zink Gallium driver.
+          # With only gallium-drivers=zink, Mesa's Android Gallium
+          # module contains the Zink driver.
+          cp install/lib/libgallium_dri.so \
+             artifact/lib/dri/zink_dri.so
+
+          # Other Mesa runtime libraries
+          for f in \
+            libglapi.so \
+            libexpat.so \
+            libxml2.so \
+            libarchive.so
+          do
+            if [ -f "install/lib/$f" ]; then
+              cp "install/lib/$f" "artifact/$f"
+            fi
+          done
 
           echo
           echo "=== Artifact contents ==="
-          find . -type f -print | sort
+          find artifact -type f -print | sort
 
-          cat > meta.json <<'EOF'
+          echo
+          echo "=== ELF architecture ==="
+          file artifact/*.so artifact/lib/dri/*.so
+
+          cat > artifact/meta.json <<'EOF'
           {
             "schemaVersion": 1,
             "name": "MyTurnipZink",
             "description": "Mesa Turnip Vulkan driver + Zink OpenGL renderer for Adreno",
             "author": "IO-MC",
-            "packageVersion": "2",
+            "packageVersion": "3",
             "vendor": "Mesa",
             "driverVersion": "Mesa 26.3-devel",
             "minApi": 28,
@@ -205,6 +238,7 @@ jobs:
           }
           EOF
 
+          cd artifact
           zip -9 -r ../MyTurnipZink-TurnipZink.zip .
 
       - name: Upload Turnip + Zink artifact
