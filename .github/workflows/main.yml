@@ -1,0 +1,36 @@
+name: Test Build Environment
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Android NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK r28c
+        run: |
+          sdkmanager "ndk;28.2.13676358"
+
+      - name: Test Build Environment
+        run: |
+          echo "=== Host ==="
+          uname -a
+          echo
+
+          echo "=== CPU ==="
+          uname -m
+          echo
+
+          echo "=== Clang ==="
+          $ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --version
+          echo
+
+          echo "=== NDK ==="
+          echo "$ANDROID_NDK_ROOT"
