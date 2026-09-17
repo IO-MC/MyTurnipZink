@@ -11,8 +11,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Android NDK
-        uses: android-actions/setup-android@v3
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools"
 
       - name: Install NDK r28c
         run: |
@@ -28,9 +30,15 @@ jobs:
           uname -m
           echo
 
-          echo "=== Clang ==="
-          $ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --version
+          echo "=== Android SDK ==="
+          echo "$ANDROID_SDK_ROOT"
           echo
 
           echo "=== NDK ==="
-          echo "$ANDROID_NDK_ROOT"
+          echo "$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+          test -x "$ANDROID_SDK_ROOT/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+
+          echo
+
+          echo "=== Clang ==="
+          "$ANDROID_SDK_ROOT/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version
