@@ -140,16 +140,16 @@ jobs:
       - name: Check Zink configuration
         working-directory: mesa
         run: |
-          echo "=== Zink targets ==="
-          meson introspect build --targets | grep -i zink || true
+          echo "=== ZINK TARGETS ==="
+          meson introspect build --targets | grep -o '"name": "[^"]*zink[^"]*"' | head -20 || true
 
           echo
-          echo "=== Gallium drivers ==="
-          meson configure build | grep -i gallium || true
+          echo "=== ZINK FILES ==="
+          find build -type f \( -name 'zink_dri.so' -o -name '*zink*.so' \) -print || true
 
           echo
-          echo "=== Zink ==="
-          meson configure build | grep -i zink || true
+          echo "=== INSTALLED DRI ==="
+          find ../install -type f -path '*/dri/*' -print || true
 
       - name: Build Mesa
         working-directory: mesa
