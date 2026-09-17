@@ -147,30 +147,43 @@ jobs:
         run: |
           meson install -C build
 
-      - name: Check Turnip
+      - name: Check Mesa output
         run: |
-          echo "=== Build output ==="
-          find install -type f -name '*.so' -print
+          echo "=== All Mesa shared libraries ==="
+          find install -type f \( -name '*.so' -o -name '*.so.*' \) -print
 
           echo
           echo "=== Turnip ==="
           ls -lh install/lib/libvulkan_freedreno.so
-
           file install/lib/libvulkan_freedreno.so
 
-      - name: Package Turnip
+          echo
+          echo "=== Zink / DRI ==="
+          find install -type f \( -name '*zink*.so*' -o -path '*/dri/*' \) -print
+
+      - name: Package Turnip + Zink
         run: |
           mkdir -p artifact
 
-          cp install/lib/libvulkan_freedreno.so artifact/
+          echo "=== Copy Mesa libraries ==="
 
-          cat > artifact/meta.json <<'EOF'
+          # Copy all Mesa shared libraries while preserving directories.
+          cd install
+          find . -type f \( -name '*.so' -o -name '*.so.*' \) -exec cp --parents {} ../artifact/ \;
+
+          cd ../artifact
+
+          echo
+          echo "=== Artifact contents ==="
+          find . -type f -print | sort
+
+          cat > meta.json <<'EOF'
           {
             "schemaVersion": 1,
             "name": "MyTurnipZink",
-            "description": "Mesa Turnip Vulkan driver for Adreno",
+            "description": "Mesa Turnip Vulkan driver + Zink OpenGL renderer for Adreno",
             "author": "IO-MC",
-            "packageVersion": "1",
+            "packageVersion": "2",
             "vendor": "Mesa",
             "driverVersion": "Mesa 26.3-devel",
             "minApi": 28,
@@ -178,13 +191,10 @@ jobs:
           }
           EOF
 
-          cd artifact
-          zip -9 ../MyTurnipZink-Turnip.zip \
-            libvulkan_freedreno.so \
-            meta.json
+          zip -9 -r ../MyTurnipZink-TurnipZink.zip .
 
-      - name: Upload Turnip artifact
+      - name: Upload Turnip + Zink artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MyTurnipZink-Turnip
-          path: MyTurnipZink-Turnip.zip
+          name: MyTurnipZink-TurnipZink
+          path: MyTurnipZink-TurnipZink.zip
