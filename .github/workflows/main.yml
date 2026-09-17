@@ -57,9 +57,12 @@ jobs:
 
       - name: Clone Mesa
         run: |
-          git clone --depth=1 \
+          git clone \
             https://gitlab.freedesktop.org/mesa/mesa.git \
             mesa
+
+          cd mesa
+          git checkout 8d68f369fc1
 
       - name: Show Mesa version
         working-directory: mesa
