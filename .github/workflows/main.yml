@@ -126,9 +126,12 @@ jobs:
             -Dplatform-sdk-version=33 \
             -Dandroid-stub=true \
             -Dandroid-libbacktrace=disabled \
-            -Degl=disabled \
+            -Degl=enabled \
+            -Dgles2=enabled \
+            -Dgles1=disabled \
             -Dglx=disabled \
-            -Dgallium-drivers= \
+            -Dshared-glapi=enabled \
+            -Dgallium-drivers=zink \
             -Dvulkan-drivers=freedreno \
             -Dfreedreno-kmds=kgsl \
             -Dvulkan-beta=true \
