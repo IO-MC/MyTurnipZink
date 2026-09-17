@@ -85,6 +85,7 @@ jobs:
           c_ld = 'lld'
           cpp_ld = 'lld'
           strip = ndk / 'toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
+          pkgconfig = '/usr/bin/pkg-config'
           
           [host_machine]
           system = 'android'
