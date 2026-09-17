@@ -90,7 +90,11 @@ jobs:
           cpu = 'armv8'
           endian = 'little'
           EOF
-
+          
+      - name: Add NDK LLVM tools to PATH
+        run: |
+          echo "$ANDROID_SDK_ROOT/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+          
       - name: Create native file
         run: |
           cat > native.txt <<'EOF'
