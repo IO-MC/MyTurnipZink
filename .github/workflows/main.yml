@@ -143,6 +143,7 @@ jobs:
             -Dprecomp-compiler=auto \
             -Ddraw-use-llvm=false \
             -Dspirv-tools=disabled \
+            -Dlibarchive-3.7.2:openssl=disabled \
             -Dzstd=disabled \
             -Degl-lib-suffix=_mesa \
             -Dgles-lib-suffix=_mesa \
@@ -151,7 +152,6 @@ jobs:
             -Dvulkan-drivers=freedreno \
             -Dfreedreno-kmds=kgsl \
             -Dvulkan-beta=true \
-            -Dlibarchive:crypto=none \
             -Dllvm=disabled
 
       - name: Check Zink configuration
