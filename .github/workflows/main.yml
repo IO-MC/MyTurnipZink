@@ -161,7 +161,7 @@ jobs:
           meson setup build-compiler \
             --prefix "$GITHUB_WORKSPACE/mesa-compiler" \
             --buildtype=release \
-            --strip=true \
+            --strip \
             -Dplatforms= \
             -Dgallium-drivers= \
             -Dvulkan-drivers= \
