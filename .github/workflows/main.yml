@@ -141,7 +141,9 @@ jobs:
 
       - name: Add native Mesa compiler to PATH
         run: |
+          set -eux
           echo "$GITHUB_WORKSPACE/mesa-compiler/bin" >> "$GITHUB_PATH"
+          export PATH="$GITHUB_WORKSPACE/mesa-compiler/bin:$PATH"
           command -v mesa_clc
           mesa_clc --help >/dev/null
 
