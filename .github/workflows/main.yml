@@ -75,8 +75,8 @@ jobs:
         run: |
           echo "=== Mesa commit ==="
           git rev-parse HEAD
-          echo "=== meson.build lines 1980-2045 ==="
-          nl -ba meson.build | sed -n '1980,2045p'
+          echo "=== meson.build lines 1930-2045 ==="
+          nl -ba meson.build | sed -n '1930,2045p'
 
       - name: Create Android cross file
         run: |
