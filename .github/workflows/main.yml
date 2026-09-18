@@ -139,8 +139,8 @@ jobs:
             -Dgles2=enabled \
             -Dgles1=disabled \
             -Dglx=disabled \
-            -Dmesa-clc=disabled \
-            -Dprecomp-compiler=disabled \
+            -Dmesa-clc=auto \
+            -Dprecomp-compiler=auto \
             -Ddraw-use-llvm=false \
             -Degl-lib-suffix=_mesa \
             -Dgles-lib-suffix=_mesa \
