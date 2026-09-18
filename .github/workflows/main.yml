@@ -8,18 +8,8 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-
-      # ============================================================
-      # 1. Checkout
-      # ============================================================
-
       - name: Checkout
         uses: actions/checkout@v4
-
-
-      # ============================================================
-      # 2. Android SDK + NDK
-      # ============================================================
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
@@ -30,14 +20,10 @@ jobs:
         run: |
           sdkmanager "ndk;28.2.13676358"
 
-
-      # ============================================================
-      # 3. Host build dependencies
-      # ============================================================
-
       - name: Install build dependencies
         run: |
           sudo apt-get update
+
           sudo apt-get install -y \
             python3-venv \
             python3-pip \
@@ -72,7 +58,9 @@ jobs:
             spirv-tools
 
           python3 -m venv "$HOME/meson-venv"
+
           "$HOME/meson-venv/bin/pip" install --upgrade pip
+
           "$HOME/meson-venv/bin/pip" install \
             "meson>=1.4.0,<2.0" \
             packaging \
@@ -80,11 +68,6 @@ jobs:
             PyYAML
 
           echo "$HOME/meson-venv/bin" >> "$GITHUB_PATH"
-
-
-      # ============================================================
-      # 4. Check host tools
-      # ============================================================
 
       - name: Check host tools
         run: |
@@ -103,10 +86,8 @@ jobs:
           echo "=== Clang ==="
           /usr/bin/clang-18 --version
 
-
-      # ============================================================
-      # 5. Clone exact Mesa commit
-      # ============================================================
+          echo "=== Clang libraries ==="
+          dpkg -l | grep -E 'libclang|clang-18' || true
 
       - name: Clone Mesa
         run: |
@@ -117,11 +98,6 @@ jobs:
           cd mesa
 
           git checkout 8d68f369fc1a95bd701600f99b9c45d5da8e6068
-
-
-      # ============================================================
-      # 6. Verify Mesa version
-      # ============================================================
 
       - name: Show Mesa version
         working-directory: mesa
@@ -135,16 +111,8 @@ jobs:
           echo "=== Mesa project ==="
           grep '^project(' meson.build | head -1
 
-
       # ============================================================
-      # 7. Build native mesa_clc
-      #
-      # IMPORTANT:
-      # This is an x86_64 HOST executable.
-      # It is NOT the Android renderer.
-      #
-      # Mesa's Android documentation recommends preparing
-      # mesa_clc on the host before the Android cross-build.
+      # Build native Mesa compiler tools
       # ============================================================
 
       - name: Build native Mesa CLC compiler
@@ -171,17 +139,12 @@ jobs:
 
           meson install -C build-compiler
 
-
-      # ============================================================
-      # 8. Verify native mesa_clc
-      # ============================================================
-
       - name: Verify native Mesa CLC
         run: |
           echo "=== Installed Mesa compiler files ==="
 
           find "$GITHUB_WORKSPACE/mesa-compiler" \
-            -maxdepth 3 \
+            -maxdepth 4 \
             -type f \
             -print | sort
 
@@ -194,26 +157,30 @@ jobs:
 
           echo "mesa_clc OK"
 
+          echo "=== vtn_bindgen2 ==="
 
-      # ============================================================
-      # 9. Add native Mesa compiler to PATH
-      # ============================================================
+          if [ -x "$GITHUB_WORKSPACE/mesa-compiler/bin/vtn_bindgen2" ]; then
+            "$GITHUB_WORKSPACE/mesa-compiler/bin/vtn_bindgen2" \
+              --help >/dev/null || true
+
+            echo "vtn_bindgen2 OK"
+          else
+            echo "vtn_bindgen2 not installed in compiler prefix"
+          fi
 
       - name: Add native Mesa compiler to PATH
         run: |
           echo "$GITHUB_WORKSPACE/mesa-compiler/bin" >> "$GITHUB_PATH"
 
-
-      # ============================================================
-      # 10. Verify native compiler in PATH
-      # ============================================================
-
-      - name: Check mesa_clc PATH
+      - name: Check mesa compiler PATH
         run: |
           echo "=== mesa_clc ==="
+
           command -v mesa_clc
 
           mesa_clc --help >/dev/null
+
+          echo "mesa_clc PATH OK"
 
           echo "=== vtn_bindgen2 ==="
 
@@ -221,14 +188,11 @@ jobs:
             command -v vtn_bindgen2
             vtn_bindgen2 --help >/dev/null || true
           else
-            echo "vtn_bindgen2 not installed; continuing"
+            echo "vtn_bindgen2 not in PATH; continuing"
           fi
 
-
       # ============================================================
-      # 11. Create Android cross file
-      #
-      # Based on Mesa Android cross-compilation model.
+      # Android cross compilation
       # ============================================================
 
       - name: Create Android cross file
@@ -257,25 +221,21 @@ jobs:
           echo "=== Android cross file ==="
           cat android-aarch64.txt
 
+      - name: Check Android compiler
+        run: |
+          NDK="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+
+          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang" \
+            --version
+
+          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" \
+            --version
+
+          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" \
+            --version
 
       # ============================================================
-      # 12. Configure Android Mesa
-      #
-      # IMPORTANT:
-      # mesa-clc=system
-      #
-      # This tells Mesa to use the HOST mesa_clc prepared above.
-      # It prevents CLC from forcing TARGET LLVM into the
-      # Android build.
-      #
-      # Turnip:
-      #   vulkan-drivers=freedreno
-      #
-      # KGSL:
-      #   freedreno-kmds=kgsl
-      #
-      # Zink:
-      #   gallium-drivers=zink
+      # Configure Mesa
       # ============================================================
 
       - name: Configure Mesa Android
@@ -311,19 +271,13 @@ jobs:
             -Dfreedreno-kmds=kgsl \
             -Dvulkan-beta=true
 
-
-      # ============================================================
-      # 13. Show final Mesa configuration
-      # ============================================================
-
       - name: Show Mesa configuration
         working-directory: mesa
         run: |
           meson configure build
 
-
       # ============================================================
-      # 14. Build Mesa
+      # Build
       # ============================================================
 
       - name: Build Mesa
@@ -331,131 +285,232 @@ jobs:
         run: |
           meson compile -C build -j2
 
-
       # ============================================================
-      # 15. Install Mesa
+      # Install
       # ============================================================
 
       - name: Install Mesa
         working-directory: mesa
         run: |
+          rm -rf "$GITHUB_WORKSPACE/install"
+
           meson install -C build
 
-
       # ============================================================
-      # 16. Inspect installed files
+      # Inspect installation
       # ============================================================
 
       - name: Inspect installed files
         run: |
-          echo "=== All installed files ==="
+          echo "============================================================"
+          echo "ALL INSTALLED FILES"
+          echo "============================================================"
 
           find "$GITHUB_WORKSPACE/install" \
             -type f \
             -print | sort
 
-          echo "=== Shared libraries ==="
+          echo
+          echo "============================================================"
+          echo "SHARED LIBRARIES"
+          echo "============================================================"
 
           find "$GITHUB_WORKSPACE/install" \
             -type f \
             \( -name "*.so" -o -name "*.so.*" \) \
             -print | sort
 
-
       # ============================================================
-      # 17. Verify Turnip
+      # Verify Turnip
       # ============================================================
 
       - name: Verify Turnip
         run: |
           TURNIP="$GITHUB_WORKSPACE/install/lib/libvulkan_freedreno.so"
 
+          echo "============================================================"
+          echo "VERIFY TURNIP"
+          echo "============================================================"
+
           test -f "$TURNIP"
 
-          echo "=== Turnip file ==="
+          echo "=== File ==="
           file "$TURNIP"
 
-          echo "=== Turnip architecture ==="
-          readelf -h "$TURNIP" | grep -E \
-            "Class|Machine"
+          echo
+          echo "=== Architecture ==="
+          readelf -h "$TURNIP" \
+            | grep -E "Class|Machine"
 
-          echo "=== Turnip dynamic dependencies ==="
-          readelf -d "$TURNIP" || true
+          echo
+          echo "=== Dynamic dependencies ==="
+          readelf -d "$TURNIP" \
+            | grep NEEDED || true
 
+          echo
+          echo "Turnip OK"
 
       # ============================================================
-      # 18. Verify Zink
+      # Verify Zink
       # ============================================================
 
       - name: Verify Zink
         run: |
-          ZINK="$GITHUB_WORKSPACE/install/lib/libgallium_dri.so"
+          GALLIUM="$GITHUB_WORKSPACE/install/lib/libgallium_dri.so"
 
-          test -f "$ZINK"
+          echo "============================================================"
+          echo "VERIFY ZINK"
+          echo "============================================================"
 
-          echo "=== Zink/Gallium file ==="
-          file "$ZINK"
+          test -f "$GALLIUM"
 
+          echo "=== File ==="
+          file "$GALLIUM"
+
+          echo
+          echo "=== Architecture ==="
+          readelf -h "$GALLIUM" \
+            | grep -E "Class|Machine"
+
+          echo
+          echo "=== Dynamic dependencies ==="
+          readelf -d "$GALLIUM" \
+            | grep NEEDED || true
+
+          echo
           echo "=== Zink strings ==="
 
-          strings "$ZINK" \
-            | grep -Ei "mesa zink|ZINK_DEBUG|ZINK_DESCRIPTORS" \
-            | head -50 || true
+          strings "$GALLIUM" \
+            | grep -Ei \
+              "mesa zink|ZINK_DEBUG|ZINK_DESCRIPTORS|zink" \
+            | head -100 || true
 
+          echo
+          echo "Zink/Gallium OK"
 
       # ============================================================
-      # 19. Package Turnip + Zink
+      # Find libc++_shared.so from NDK
+      # ============================================================
+
+      - name: Locate Android libc++_shared.so
+        run: |
+          NDK="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+
+          echo "=== Searching NDK for libc++_shared.so ==="
+
+          find "$NDK" \
+            -type f \
+            -name "libc++_shared.so" \
+            -print | sort
+
+          LIBCXX="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
+
+          echo
+          echo "=== Expected ARM64 libc++_shared.so ==="
+          echo "$LIBCXX"
+
+          test -f "$LIBCXX"
+
+          file "$LIBCXX"
+
+          readelf -h "$LIBCXX" \
+            | grep -E "Class|Machine"
+
+          echo "libc++_shared.so OK"
+
+      # ============================================================
+      # Check required libraries before packaging
+      # ============================================================
+
+      - name: Check required libraries
+        run: |
+          INSTALL="$GITHUB_WORKSPACE/install"
+
+          echo "============================================================"
+          echo "CHECK REQUIRED MESA LIBRARIES"
+          echo "============================================================"
+
+          test -f "$INSTALL/lib/libvulkan_freedreno.so"
+          test -f "$INSTALL/lib/libgallium_dri.so"
+          test -f "$INSTALL/lib/libEGL.so"
+          test -f "$INSTALL/lib/libGLESv2.so"
+
+          echo "Turnip:  OK"
+          echo "Gallium: OK"
+          echo "EGL:     OK"
+          echo "GLESv2:  OK"
+
+      # ============================================================
+      # Package
       # ============================================================
 
       - name: Package Turnip + Zink
         run: |
-          rm -rf artifact
+          NDK="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
 
-          mkdir -p artifact/lib/dri
+          INSTALL="$GITHUB_WORKSPACE/install"
 
+          LIBCXX="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
+
+          rm -rf "$GITHUB_WORKSPACE/artifact"
+
+          mkdir -p \
+            "$GITHUB_WORKSPACE/artifact/lib/dri"
 
           # --------------------------------------------------------
           # Turnip
           # --------------------------------------------------------
 
           cp \
-            "$GITHUB_WORKSPACE/install/lib/libvulkan_freedreno.so" \
-            artifact/libvulkan_freedreno.so
-
+            "$INSTALL/lib/libvulkan_freedreno.so" \
+            "$GITHUB_WORKSPACE/artifact/libvulkan_freedreno.so"
 
           # --------------------------------------------------------
-          # EGL
+          # Mesa EGL
           # --------------------------------------------------------
 
-          if [ -f "$GITHUB_WORKSPACE/install/lib/libEGL.so" ]; then
+          if [ -f "$INSTALL/lib/libEGL.so" ]; then
             cp \
-              "$GITHUB_WORKSPACE/install/lib/libEGL.so" \
-              artifact/libEGL.so
+              "$INSTALL/lib/libEGL.so" \
+              "$GITHUB_WORKSPACE/artifact/libEGL.so"
           fi
 
-
           # --------------------------------------------------------
-          # GLES2
+          # Mesa GLESv2
           # --------------------------------------------------------
 
-          if [ -f "$GITHUB_WORKSPACE/install/lib/libGLESv2.so" ]; then
+          if [ -f "$INSTALL/lib/libGLESv2.so" ]; then
             cp \
-              "$GITHUB_WORKSPACE/install/lib/libGLESv2.so" \
-              artifact/libGLESv2.so
+              "$INSTALL/lib/libGLESv2.so" \
+              "$GITHUB_WORKSPACE/artifact/libGLESv2.so"
           fi
 
-
           # --------------------------------------------------------
-          # Zink/Gallium
+          # IMPORTANT:
+          # libEGL.so and libGLESv2.so from this build depend on
+          # libgallium_dri.so.
+          #
+          # Keep the original library AND provide zink_dri.so
+          # for DRI-style lookup.
           # --------------------------------------------------------
 
           cp \
-            "$GITHUB_WORKSPACE/install/lib/libgallium_dri.so" \
-            artifact/lib/dri/zink_dri.so
+            "$INSTALL/lib/libgallium_dri.so" \
+            "$GITHUB_WORKSPACE/artifact/libgallium_dri.so"
 
+          cp \
+            "$INSTALL/lib/libgallium_dri.so" \
+            "$GITHUB_WORKSPACE/artifact/lib/dri/zink_dri.so"
+
+          # Also place a copy beside the DRI driver for compatibility
+          # with loaders that search the DRI directory first.
+
+          cp \
+            "$INSTALL/lib/libgallium_dri.so" \
+            "$GITHUB_WORKSPACE/artifact/lib/dri/libgallium_dri.so"
 
           # --------------------------------------------------------
-          # Supporting libraries
+          # Other Mesa dependencies
           # --------------------------------------------------------
 
           for f in \
@@ -463,70 +518,145 @@ jobs:
             libexpat.so \
             libxml2.so
           do
-            if [ -f "$GITHUB_WORKSPACE/install/lib/$f" ]; then
+            if [ -f "$INSTALL/lib/$f" ]; then
               cp \
-                "$GITHUB_WORKSPACE/install/lib/$f" \
-                "artifact/$f"
+                "$INSTALL/lib/$f" \
+                "$GITHUB_WORKSPACE/artifact/$f"
             fi
           done
 
+          # --------------------------------------------------------
+          # Android C++ runtime
+          # --------------------------------------------------------
+
+          test -f "$LIBCXX"
+
+          cp \
+            "$LIBCXX" \
+            "$GITHUB_WORKSPACE/artifact/libc++_shared.so"
 
           # --------------------------------------------------------
           # Show artifact
           # --------------------------------------------------------
 
-          echo "=== Artifact files ==="
+          echo
+          echo "============================================================"
+          echo "ARTIFACT FILES"
+          echo "============================================================"
 
-          find artifact \
+          find "$GITHUB_WORKSPACE/artifact" \
             -type f \
             -print | sort
 
+          echo
+          echo "============================================================"
+          echo "ARTIFACT SIZE"
+          echo "============================================================"
 
-          # --------------------------------------------------------
-          # Check architecture
-          # --------------------------------------------------------
+          du -ah "$GITHUB_WORKSPACE/artifact" \
+            | sort -h
 
-          echo "=== Artifact architectures ==="
+          echo
+          echo "============================================================"
+          echo "ARTIFACT ARCHITECTURES"
+          echo "============================================================"
 
-          find artifact \
+          find "$GITHUB_WORKSPACE/artifact" \
             -type f \
             -name "*.so" \
             -print0 \
-            | xargs -0 file
-
+            | xargs -0 -r file
 
           # --------------------------------------------------------
           # Metadata
           # --------------------------------------------------------
 
-          cat > artifact/meta.json <<'EOF'
+          cat > "$GITHUB_WORKSPACE/artifact/meta.json" <<'EOF'
           {
             "schemaVersion": 1,
             "name": "MyTurnipZink",
             "description": "Mesa Turnip Vulkan driver + Zink OpenGL renderer for Adreno",
             "author": "IO-MC",
-            "packageVersion": "5",
+            "packageVersion": "6",
             "vendor": "Mesa",
             "driverVersion": "Mesa 26.3.0-devel",
-            "minApi": 28,
-            "libraryName": "libvulkan_freedreno.so"
+            "mesaCommit": "8d68f369fc1a95bd701600f99b9c45d5da8e6068",
+            "minApi": 33,
+            "architecture": "arm64-v8a",
+            "libraryName": "libvulkan_freedreno.so",
+            "renderer": "zink",
+            "vulkanDriver": "freedreno",
+            "freedrenoKmd": "kgsl"
           }
           EOF
 
+          echo
+          echo "============================================================"
+          echo "META.JSON"
+          echo "============================================================"
+
+          cat "$GITHUB_WORKSPACE/artifact/meta.json"
 
           # --------------------------------------------------------
-          # ZIP
+          # Create final ZIP
           # --------------------------------------------------------
 
-          cd artifact
+          cd "$GITHUB_WORKSPACE/artifact"
 
           zip -9 -r \
-            ../MyTurnipZink-TurnipZink.zip \
+            "$GITHUB_WORKSPACE/MyTurnipZink-TurnipZink.zip" \
             .
 
+          echo
+          echo "============================================================"
+          echo "FINAL ZIP"
+          echo "============================================================"
+
+          ls -lh \
+            "$GITHUB_WORKSPACE/MyTurnipZink-TurnipZink.zip"
 
       # ============================================================
-      # 20. Upload artifact
+      # Final verification of ZIP
+      # ============================================================
+
+      - name: Verify final ZIP
+        run: |
+          ZIP="$GITHUB_WORKSPACE/MyTurnipZink-TurnipZink.zip"
+
+          echo "============================================================"
+          echo "FINAL ZIP CONTENTS"
+          echo "============================================================"
+
+          unzip -l "$ZIP"
+
+          echo
+          echo "============================================================"
+          echo "CHECK REQUIRED FILES IN ZIP"
+          echo "============================================================"
+
+          unzip -l "$ZIP" \
+            | grep -F "libvulkan_freedreno.so"
+
+          unzip -l "$ZIP" \
+            | grep -F "libgallium_dri.so"
+
+          unzip -l "$ZIP" \
+            | grep -F "lib/dri/zink_dri.so"
+
+          unzip -l "$ZIP" \
+            | grep -F "libEGL.so"
+
+          unzip -l "$ZIP" \
+            | grep -F "libGLESv2.so"
+
+          unzip -l "$ZIP" \
+            | grep -F "libc++_shared.so"
+
+          echo
+          echo "Final ZIP verification OK"
+
+      # ============================================================
+      # Upload artifact
       # ============================================================
 
       - name: Upload Turnip + Zink artifact
@@ -534,3 +664,4 @@ jobs:
         with:
           name: MyTurnipZink-TurnipZink
           path: MyTurnipZink-TurnipZink.zip
+          if-no-files-found: error
