@@ -70,6 +70,14 @@ jobs:
           git log -1 --oneline
           grep '^project(' meson.build | head -1
 
+      - name: Show Mesa LLVM section
+        working-directory: mesa
+        run: |
+          echo "=== Mesa commit ==="
+          git rev-parse HEAD
+          echo "=== meson.build lines 1980-2045 ==="
+          nl -ba meson.build | sed -n '1980,2045p'
+
       - name: Create Android cross file
         run: |
           NDK="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
