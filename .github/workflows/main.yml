@@ -144,6 +144,7 @@ jobs:
             -Dprecomp-compiler=auto \
             -Ddraw-use-llvm=false \
             -Dspirv-tools=disabled \
+            -Dshader-cache=disabled
             -Dzstd=disabled \
             -Dzlib=disabled \
             -Dshared-glapi=enabled \
