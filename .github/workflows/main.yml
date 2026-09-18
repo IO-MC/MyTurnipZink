@@ -151,6 +151,7 @@ jobs:
             -Dvulkan-drivers=freedreno \
             -Dfreedreno-kmds=kgsl \
             -Dvulkan-beta=true \
+            -Dlibarchive:crypto=none \
             -Dllvm=disabled
 
       - name: Check Zink configuration
