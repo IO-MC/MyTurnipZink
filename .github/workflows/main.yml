@@ -142,6 +142,7 @@ jobs:
             -Dmesa-clc=auto \
             -Dprecomp-compiler=auto \
             -Ddraw-use-llvm=false \
+            -Dspirv-tools=disabled \
             -Dzstd=disabled \
             -Degl-lib-suffix=_mesa \
             -Dgles-lib-suffix=_mesa \
