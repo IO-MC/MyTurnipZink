@@ -1,4 +1,4 @@
-name: Build MyTurnipZink #46
+name: Build MyTurnipZink #46.1
 
 on:
   workflow_dispatch:
@@ -12,40 +12,22 @@ on:
 permissions:
   contents: read
 
-env:
-  DEBIAN_FRONTEND: noninteractive
-
-  # Mesa source
-  MESA_REPO: https://gitlab.freedesktop.org/mesa/mesa.git
-  MESA_REF: 8d68f369fc1
-  MESA_DIR: ${{ github.workspace }}/mesa
-
-  # Android
-  ANDROID_NDK_VERSION: 28.2.13676358
-  ANDROID_API: 33
-
-  # Plugin
-  PLUGIN_REPO: https://github.com/ZalithLauncher/RendererPlugin-v2.git
-  ZINK_REPO: https://github.com/GoyDevv/IronizedZink.git
-
-  # MyTurnipZink version
-  VERSION_CODE: 46
-  VERSION_NAME: "0.46"
-
 jobs:
   build:
+    name: Build Mesa Zink + Turnip
     runs-on: ubuntu-24.04
 
+    env:
+      MESA_COMMIT: 8d68f369fc1
+      ANDROID_API: 33
+      NDK_VERSION: 28.2.13676358
+      MESA_DIR: ${{ github.workspace }}/mesa
+      MESA_COMPILER_DIR: ${{ github.workspace }}/mesa-compiler
+
     steps:
-      # ============================================================
-      # 1. Checkout MyTurnipZink
-      # ============================================================
       - name: Checkout MyTurnipZink
         uses: actions/checkout@v4
 
-      # ============================================================
-      # 2. Install Android / Mesa build dependencies
-      # ============================================================
       - name: Install build dependencies
         run: |
           set -eux
@@ -54,264 +36,220 @@ jobs:
 
           sudo apt-get install -y \
             git \
-            curl \
             wget \
+            curl \
             unzip \
             zip \
-            ninja-build \
+            p7zip-full \
             pkg-config \
             python3 \
             python3-pip \
             python3-venv \
-            python3-setuptools \
-            python3-wheel \
+            ninja-build \
+            meson \
+            build-essential \
+            cmake \
             bison \
             flex \
             gettext \
-            cmake \
-            meson \
+            libexpat1-dev \
+            libxml2-dev \
+            libarchive-dev \
+            libz-dev \
+            zlib1g-dev \
+            libdrm-dev \
+            libelf-dev \
+            libwayland-dev \
+            wayland-protocols \
+            libx11-dev \
+            libxext-dev \
+            libxdamage-dev \
+            libxfixes-dev \
+            libxshmfence-dev \
+            libxcb1-dev \
+            libxcb-dri2-0-dev \
+            libxcb-dri3-dev \
+            libxcb-present-dev \
+            libxcb-randr0-dev \
+            libxcb-shm0-dev \
+            libxcb-sync-dev \
+            libxcb-xfixes0-dev \
+            libffi-dev \
+            libssl-dev \
             libclang-18-dev \
             clang-18 \
             llvm-18 \
             llvm-18-dev \
-            llvm-18-tools \
-            libdrm-dev \
-            libexpat1-dev \
-            libxml2-dev \
-            libz-dev \
-            zlib1g-dev \
-            libelf-dev \
-            libwayland-dev \
-            wayland-protocols \
-            glslang-tools \
-            spirv-tools \
-            ca-certificates
+            llvm-18-tools
 
-      # ============================================================
-      # 3. Java 21
-      # ============================================================
       - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: '21'
 
-      # ============================================================
-      # 4. Android SDK / NDK
-      # ============================================================
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK / NDK
+      - name: Install Android SDK packages
         run: |
           set -eux
 
-          sdkmanager --install \
+          yes | sdkmanager --licenses >/dev/null || true
+
+          sdkmanager \
             "platform-tools" \
             "platforms;android-${ANDROID_API}" \
             "build-tools;35.0.0" \
-            "ndk;${ANDROID_NDK_VERSION}"
+            "ndk;${NDK_VERSION}"
 
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
-
-          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
-          echo "$ANDROID_SDK_ROOT/build-tools/35.0.0" >> "$GITHUB_PATH"
-          echo "$ANDROID_SDK_ROOT/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_PATH"
-          echo "$ANDROID_SDK_ROOT/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
-
-      # ============================================================
-      # 5. Verify Android toolchain
-      # ============================================================
-      - name: Verify Android toolchain
-        run: |
-          set -eux
-
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT"
-
-          "$ANDROID_NDK_ROOT/ndk-build" --version || true
-
-          clang --version
-          llvm-ar --version
-          ld.lld --version
-
-          test -d "$ANDROID_NDK_ROOT"
-
-      # ============================================================
-      # 6. Checkout Mesa
-      # ============================================================
-      - name: Checkout Mesa
-        run: |
-          set -eux
-
-          rm -rf "$MESA_DIR"
-
-          git clone \
-            --depth 1 \
-            "$MESA_REPO" \
-            "$MESA_DIR"
-
-          cd "$MESA_DIR"
-
-          git fetch --depth 1 origin "$MESA_REF"
-          git checkout "$MESA_REF"
-
-          git log -1 --oneline
-
-      # ============================================================
-      # 7. Prepare Python build environment
-      # ============================================================
-      - name: Setup Python build environment
+      - name: Setup Python environment
         run: |
           set -eux
 
           python3 -m venv "$RUNNER_TEMP/mesa-venv"
 
-          source "$RUNNER_TEMP/mesa-venv/bin/activate"
+          "$RUNNER_TEMP/mesa-venv/bin/python" -m pip install --upgrade pip
 
-          python -m pip install --upgrade pip setuptools wheel
-
-          python -m pip install \
-            "meson>=1.4.0" \
+          "$RUNNER_TEMP/mesa-venv/bin/pip" install \
+            "meson>=1.4" \
             mako \
-            pyyaml \
+            PyYAML \
             packaging
 
           echo "$RUNNER_TEMP/mesa-venv/bin" >> "$GITHUB_PATH"
 
-          meson --version
-          ninja --version
-
-      # ============================================================
-      # 8. Build native Mesa CLC compiler
-      #
-      # This compiler runs on the GitHub runner and generates
-      # the compiler payload needed by Turnip.
-      # ============================================================
-      - name: Build native Mesa CLC compiler
+      - name: Export Android NDK environment
         run: |
           set -eux
 
-          source "$RUNNER_TEMP/mesa-venv/bin/activate"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
 
-          rm -rf "$MESA_DIR/build-compiler"
+          echo "$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+
+      - name: Verify toolchain
+        run: |
+          set -eux
+
+          java -version
+          python3 --version
+          meson --version
+          ninja --version
+
+          test -d "$ANDROID_NDK_HOME"
+
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" \
+            --version
+
+      - name: Clone Mesa
+        run: |
+          set -eux
+
+          git clone --depth=1 \
+            https://gitlab.freedesktop.org/mesa/mesa.git \
+            "$MESA_DIR"
 
           cd "$MESA_DIR"
 
-          meson setup build-compiler \
-            -Dprefix="$MESA_DIR/mesa-compiler" \
-            -Dbuildtype=release \
-            -Dstrip=true \
+          git fetch --depth=1 origin "$MESA_COMMIT"
+          git checkout "$MESA_COMMIT"
+
+          git log -1 --oneline
+
+      - name: Prepare Mesa native compiler
+        run: |
+          set -eux
+
+          cd "$MESA_DIR"
+
+          rm -rf "$MESA_COMPILER_DIR"
+
+          python3 -m meson setup \
+            "$MESA_COMPILER_DIR" \
+            --prefix="$MESA_COMPILER_DIR/install" \
+            --buildtype=release \
+            --strip \
             -Dplatforms= \
             -Dgallium-drivers= \
             -Dvulkan-drivers= \
             -Dmesa-clc=enabled \
             -Dinstall-mesa-clc=true \
-            -Dllvm=enabled
+            -Dllvm=enabled \
+            -Dbuild-tests=false \
+            -Dbuildtype=release
 
-          meson compile \
-            -C build-compiler \
-            -j2
+          python3 -m meson compile \
+            -C "$MESA_COMPILER_DIR" \
+            -j"$(nproc)"
 
-          meson install \
-            -C build-compiler
+          python3 -m meson install \
+            -C "$MESA_COMPILER_DIR"
 
-          test -x "$MESA_DIR/mesa-compiler/bin/mesa_clc"
-
-          "$MESA_DIR/mesa-compiler/bin/mesa_clc" --help >/dev/null
-
-      # ============================================================
-      # 9. Add Mesa compiler to PATH
-      # ============================================================
       - name: Add native Mesa compiler to PATH
         run: |
           set -eux
 
-          echo "$MESA_DIR/mesa-compiler/bin" >> "$GITHUB_PATH"
+          echo "$MESA_COMPILER_DIR/bin" >> "$GITHUB_PATH"
 
-          export PATH="$MESA_DIR/mesa-compiler/bin:$PATH"
+          export PATH="$MESA_COMPILER_DIR/bin:$PATH"
 
           command -v mesa_clc
           mesa_clc --help >/dev/null
 
-      # ============================================================
-      # 10. Prepare Android cross file
-      # ============================================================
       - name: Create Android cross file
         run: |
           set -eux
 
-          cat > "$MESA_DIR/android-aarch64.ini" <<'EOF'
+          NDK="$ANDROID_NDK_HOME"
+          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+          mkdir -p "$MESA_DIR/cross"
+
+          cat > "$MESA_DIR/cross/android-aarch64.ini" <<EOF
           [binaries]
-          c = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang'
-          cpp = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++'
-          ar = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
-          ranlib = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib'
-          strip = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
-          ld = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld'
+          c = '$TOOLCHAIN/aarch64-linux-android${ANDROID_API}-clang'
+          cpp = '$TOOLCHAIN/aarch64-linux-android${ANDROID_API}-clang++'
+          ar = '$TOOLCHAIN/llvm-ar'
+          ranlib = '$TOOLCHAIN/llvm-ranlib'
+          strip = '$TOOLCHAIN/llvm-strip'
+          ld = '$TOOLCHAIN/ld.lld'
           pkg-config = '/usr/bin/pkg-config'
 
           [host_machine]
           system = 'android'
           cpu_family = 'aarch64'
-          cpu = 'armv8-a'
+          cpu = 'arm64'
           endian = 'little'
-
-          [properties]
-          needs_exe_wrapper = true
-          c_args = [
-            '-fPIC'
-          ]
-          cpp_args = [
-            '-fPIC'
-          ]
           EOF
 
-          sed -i \
-            "s#'/opt/android-ndk#'$ANDROID_NDK_ROOT#g" \
-            "$MESA_DIR/android-aarch64.ini"
+      - name: Create Mesa native file
+        run: |
+          set -eux
 
-          cat "$MESA_DIR/android-aarch64.ini"
+          cat > "$MESA_DIR/cross/native.ini" <<EOF
+          [binaries]
+          c = 'cc'
+          cpp = 'c++'
+          ar = 'ar'
+          ranlib = 'ranlib'
+          strip = 'strip'
+          pkg-config = '/usr/bin/pkg-config'
+          EOF
 
-      # ============================================================
-      # 11. Prepare Mesa source
-      #
-      # libarchive.wrap caused Android fallback dependency problems
-      # in earlier builds, so remove the fallback here.
-      # ============================================================
-      - name: Prepare Mesa source tree
+      - name: Configure Mesa Zink + Turnip
         run: |
           set -eux
 
           cd "$MESA_DIR"
 
-          rm -f subprojects/libarchive.wrap
+          rm -rf build install
 
-          mkdir -p build-android
-
-      # ============================================================
-      # 12. Configure Android Mesa Turnip
-      #
-      # Build:
-      #   Vulkan Freedreno / Turnip
-      #
-      # Do not build Zink here.
-      # Zink/Kopper is supplied by the known Android payload below.
-      # ============================================================
-      - name: Configure Mesa Turnip
-        run: |
-          set -eux
-
-          source "$RUNNER_TEMP/mesa-venv/bin/activate"
-
-          export PATH="$MESA_DIR/mesa-compiler/bin:$PATH"
-
-          cd "$MESA_DIR"
-
-          meson setup build-android \
-            --cross-file android-aarch64.ini \
-            --prefix=/usr \
+          python3 -m meson setup build \
+            --cross-file "$MESA_DIR/cross/android-aarch64.ini" \
+            --native-file "$MESA_DIR/cross/native.ini" \
+            --prefix="$MESA_DIR/install" \
             --libdir=lib \
             --buildtype=release \
             --strip \
@@ -319,269 +257,217 @@ jobs:
             -Dplatform-sdk-version=${ANDROID_API} \
             -Dandroid-stub=true \
             -Dandroid-libbacktrace=disabled \
-            -Degl=disabled \
+            -Degl=enabled \
+            -Dgles2=enabled \
+            -Dgles1=disabled \
             -Dglx=disabled \
-            -Dgallium-drivers= \
+            -Degl-lib-suffix=_mesa \
+            -Dgles-lib-suffix=_mesa \
+            -Dshared-glapi=enabled \
+            -Dgallium-drivers=zink \
             -Dvulkan-drivers=freedreno \
             -Dfreedreno-kmds=kgsl \
+            -Dvulkan-beta=true \
             -Dllvm=disabled \
             -Ddraw-use-llvm=false \
             -Dmesa-clc=system \
             -Dprecomp-compiler=system \
-            -Dzstd=disabled \
             -Dspirv-tools=disabled \
+            -Dzstd=disabled \
             -Dzlib=enabled \
-            -Dshader-cache=disabled
+            -Dshader-cache=disabled \
+            -Dbuild-tests=false
 
-      # ============================================================
-      # 13. Build Mesa Turnip
-      # ============================================================
-      - name: Build Mesa Turnip
+      - name: Verify Mesa configuration
         run: |
           set -eux
-
-          source "$RUNNER_TEMP/mesa-venv/bin/activate"
 
           cd "$MESA_DIR"
 
-          meson compile \
-            -C build-android \
-            -j2
+          meson configure build | tee "$RUNNER_TEMP/mesa-config.txt"
 
-      # ============================================================
-      # 14. Install Mesa Turnip
-      # ============================================================
-      - name: Install Mesa Turnip
+          grep -E \
+            "gallium-drivers|vulkan-drivers|freedreno-kmds|egl|gles2|glx|mesa-clc" \
+            "$RUNNER_TEMP/mesa-config.txt" || true
+
+      - name: Build Mesa
         run: |
           set -eux
-
-          source "$RUNNER_TEMP/mesa-venv/bin/activate"
 
           cd "$MESA_DIR"
 
-          rm -rf "$MESA_DIR/install"
+          python3 -m meson compile \
+            -C build \
+            -j"$(nproc)"
 
-          meson install \
-            -C build-android \
-            --destdir "$MESA_DIR/install"
-
-          find "$MESA_DIR/install" -type f | sort
-
-      # ============================================================
-      # 15. Verify Turnip library
-      # ============================================================
-      - name: Verify Turnip library
+      - name: Install Mesa
         run: |
           set -eux
 
-          TURNIP_LIB="$MESA_DIR/install/usr/lib/libvulkan_freedreno.so"
+          cd "$MESA_DIR"
 
-          if [ ! -f "$TURNIP_LIB" ]; then
-            echo "ERROR: libvulkan_freedreno.so was not produced"
-            find "$MESA_DIR/install" -type f | sort
+          python3 -m meson install \
+            -C build
+
+      - name: Inspect Mesa output
+        run: |
+          set -eux
+
+          find "$MESA_DIR/install" \
+            -type f \
+            \( -name "*.so" -o -name "*.so.*" \) \
+            -print | sort
+
+      - name: Prepare renderer plugin source
+        run: |
+          set -eux
+
+          PLUGIN_DIR="$RUNNER_TEMP/renderer-plugin"
+
+          git clone --depth=1 \
+            https://github.com/ZalithLauncher/RendererPlugin-v2.git \
+            "$PLUGIN_DIR"
+
+          echo "PLUGIN_DIR=$PLUGIN_DIR" >> "$GITHUB_ENV"
+
+      - name: Prepare renderer native libraries
+        run: |
+          set -eux
+
+          PLUGIN_JNI="$PLUGIN_DIR/app/src/main/jniLibs/arm64-v8a"
+
+          mkdir -p "$PLUGIN_JNI"
+
+          MESA_LIB="$MESA_DIR/install/lib"
+
+          echo "Mesa libraries:"
+          find "$MESA_LIB" -maxdepth 1 -type f -name "*.so*" -print | sort
+
+          test -f "$MESA_LIB/libvulkan_freedreno.so"
+          test -f "$MESA_LIB/libEGL_mesa.so"
+          test -f "$MESA_LIB/libGLESv2_mesa.so"
+
+          cp -Lf \
+            "$MESA_LIB/libvulkan_freedreno.so" \
+            "$PLUGIN_JNI/libvulkan_freedreno.so"
+
+          cp -Lf \
+            "$MESA_LIB/libEGL_mesa.so" \
+            "$PLUGIN_JNI/libEGL_mesa.so"
+
+          cp -Lf \
+            "$MESA_LIB/libGLESv2_mesa.so" \
+            "$PLUGIN_JNI/libGLESv2_mesa.so"
+
+          if [ -f "$MESA_LIB/libgallium_dri.so" ]; then
+            cp -Lf \
+              "$MESA_LIB/libgallium_dri.so" \
+              "$PLUGIN_JNI/libzink_dri.so"
+          else
+            echo "ERROR: libgallium_dri.so not found"
             exit 1
           fi
 
-          file "$TURNIP_LIB"
-
-          "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" \
-            -h "$TURNIP_LIB"
-
-      # ============================================================
-      # 16. Checkout Android Kopper/Zink payload
-      #
-      # This is intentionally NOT built from the same Mesa tree.
-      # The purpose of #46 is to pair the freshly-built Turnip
-      # driver with the known Android Zink/Kopper integration.
-      # ============================================================
-      - name: Checkout Android Kopper Zink payload
-        run: |
-          set -eux
-
-          rm -rf "$RUNNER_TEMP/IronizedZink"
-
-          git clone \
-            --depth 1 \
-            "$ZINK_REPO" \
-            "$RUNNER_TEMP/IronizedZink"
-
-          find "$RUNNER_TEMP/IronizedZink/app/src/main/jniLibs" \
-            -maxdepth 3 \
-            -type f \
-            -name '*.so' \
-            -print \
-            2>/dev/null || true
-
-      # ============================================================
-      # 17. Prepare renderer plugin project
-      # ============================================================
-      - name: Prepare RendererPlugin-v2 project
-        run: |
-          set -eux
-
-          rm -rf "$RUNNER_TEMP/RendererPlugin-v2"
-
-          git clone \
-            --depth 1 \
-            "$PLUGIN_REPO" \
-            "$RUNNER_TEMP/RendererPlugin-v2"
-
-          cd "$RUNNER_TEMP/RendererPlugin-v2"
-
-          git log -1 --oneline
-
-          find app/src/main -maxdepth 4 -type f | sort
-
-      # ============================================================
-      # 18. Prepare native library directory
-      # ============================================================
-      - name: Prepare plugin native libraries
-        run: |
-          set -eux
-
-          PLUGIN="$RUNNER_TEMP/RendererPlugin-v2"
-          JNI="$PLUGIN/app/src/main/jniLibs/arm64-v8a"
-
-          mkdir -p "$JNI"
-
-          # --------------------------------------------------------
-          # Turnip
-          # --------------------------------------------------------
-          cp \
-            "$MESA_DIR/install/usr/lib/libvulkan_freedreno.so" \
-            "$JNI/libvulkan_freedreno.so"
-
-          # --------------------------------------------------------
-          # Known Android Zink/Kopper libraries
-          # --------------------------------------------------------
-          ZINK_JNI="$RUNNER_TEMP/IronizedZink/app/src/main/jniLibs/arm64-v8a"
-
-          if [ ! -d "$ZINK_JNI" ]; then
-            echo "ERROR: IronizedZink arm64-v8a library directory not found"
-            find "$RUNNER_TEMP/IronizedZink/app/src/main" -maxdepth 5 -type f | sort
-            exit 1
-          fi
-
-          find "$ZINK_JNI" \
-            -maxdepth 1 \
-            -type f \
-            -name '*.so' \
-            -exec cp -f {} "$JNI/" \;
-
-          # --------------------------------------------------------
-          # Rename Mesa Zink loader if present.
-          #
-          # The Android loader expects libzink_dri.so.
-          # --------------------------------------------------------
-          if [ -f "$JNI/libgallium_dri.so" ] && [ ! -f "$JNI/libzink_dri.so" ]; then
-            cp \
-              "$JNI/libgallium_dri.so" \
-              "$JNI/libzink_dri.so"
-          fi
-
-          # --------------------------------------------------------
-          # NDK C++ runtime
-          # --------------------------------------------------------
-          NDK_CXX="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
-
-          if [ -f "$NDK_CXX" ]; then
-            cp "$NDK_CXX" "$JNI/libc++_shared.so"
-          fi
-
-          echo "Final native libraries:"
-          ls -lh "$JNI"
-
-      # ============================================================
-      # 19. Verify required libraries
-      # ============================================================
-      - name: Verify required native libraries
-        run: |
-          set -eux
-
-          JNI="$RUNNER_TEMP/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
-
-          required=(
-            "libvulkan_freedreno.so"
-            "libglxshim.so"
-            "libEGL_mesa.so"
-            "libzink_dri.so"
-          )
-
-          for lib in "${required[@]}"; do
-            if [ ! -f "$JNI/$lib" ]; then
-              echo "ERROR: missing required library: $lib"
-              echo "Available libraries:"
-              ls -la "$JNI"
-              exit 1
+          for lib in \
+            libglapi.so \
+            libexpat.so \
+            libxml2.so \
+            libarchive.so \
+            libdrm.so
+          do
+            if [ -f "$MESA_LIB/$lib" ]; then
+              cp -Lf "$MESA_LIB/$lib" "$PLUGIN_JNI/$lib"
             fi
           done
 
-          echo "All required renderer libraries are present."
-
-      # ============================================================
-      # 20. Create renderer configuration
-      # ============================================================
-      - name: Create MyTurnipZink renderer configuration
+      - name: Add IronizedZink shim
         run: |
           set -eux
 
-          PLUGIN="$RUNNER_TEMP/RendererPlugin-v2"
+          IRONIZED_DIR="$RUNNER_TEMP/IronizedZink"
 
-          mkdir -p "$PLUGIN/app/src/main/res/values"
+          git clone --depth=1 \
+            https://github.com/GoyDevv/IronizedZink.git \
+            "$IRONIZED_DIR"
 
-          cat > "$PLUGIN/app/src/main/res/values/strings.xml" <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <string name="app_name">MyTurnipZink</string>
+          PLUGIN_JNI="$PLUGIN_DIR/app/src/main/jniLibs/arm64-v8a"
 
-              <string name="config"><![CDATA[
-          {
-            "name": "MyTurnipZink",
-            "version": "0.46",
-            "description": "Mesa Turnip 26.3-devel + Android Kopper Zink",
-            "renderer": "MyTurnipZink:libglxshim.so:libEGL_mesa.so",
-            "env": {
-              "LIBGL_ES": "3",
-              "POJAV_RENDERER": "opengles3_desktopgl_zink_kopper",
-              "MESA_LOADER_DRIVER_OVERRIDE": "zink",
-              "LIB_MESA_NAME": "libglxshim.so",
-              "MESA_GL_VERSION_OVERRIDE": "4.6",
-              "MESA_GLSL_VERSION_OVERRIDE": "460",
-              "force_glsl_extensions_warn": "true",
-              "allow_higher_compat_version": "true",
-              "allow_glsl_extension_directive_midshader": "true",
-              "FD_GRALLOC_FORCE_LINEAR": "1",
-              "ZINK_DEBUG": "norp",
-              "force_gl_renderer": "MyTurnipZink | OpenGL 4.6",
-              "force_gl_vendor": "Mesa / Turnip / Zink"
-            }
-          }
-              ]]></string>
-          </resources>
-          EOF
+          find "$IRONIZED_DIR" \
+            -type f \
+            -name "*.so" \
+            -print | sort
 
-      # ============================================================
-      # 21. Create AndroidManifest.xml
-      # ============================================================
-      - name: Create renderer manifest
+          SHIM="$(find "$IRONIZED_DIR" \
+            -type f \
+            -name "libglxshim.so" \
+            | head -n 1)"
+
+          if [ -z "$SHIM" ]; then
+            echo "ERROR: libglxshim.so not found in IronizedZink"
+            exit 1
+          fi
+
+          cp -Lf "$SHIM" "$PLUGIN_JNI/libglxshim.so"
+
+          CUTILS="$(find "$IRONIZED_DIR" \
+            -type f \
+            -name "libcutils.so" \
+            | head -n 1 || true)"
+
+          if [ -n "$CUTILS" ]; then
+            cp -Lf "$CUTILS" "$PLUGIN_JNI/libcutils.so"
+          fi
+
+          IRONIZED="$(find "$IRONIZED_DIR" \
+            -type f \
+            -name "libironized_zink.so" \
+            | head -n 1 || true)"
+
+          if [ -n "$IRONIZED" ]; then
+            cp -Lf "$IRONIZED" "$PLUGIN_JNI/libironized_zink.so"
+          fi
+
+      - name: Add Android C++ runtime
         run: |
           set -eux
 
-          PLUGIN="$RUNNER_TEMP/RendererPlugin-v2"
+          PLUGIN_JNI="$PLUGIN_DIR/app/src/main/jniLibs/arm64-v8a"
 
-          mkdir -p "$PLUGIN/app/src/main"
+          CXX_SHARED="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
 
-          cat > "$PLUGIN/app/src/main/AndroidManifest.xml" <<'EOF'
+          test -f "$CXX_SHARED"
+
+          cp -Lf \
+            "$CXX_SHARED" \
+            "$PLUGIN_JNI/libc++_shared.so"
+
+      - name: Show final native payload
+        run: |
+          set -eux
+
+          PLUGIN_JNI="$PLUGIN_DIR/app/src/main/jniLibs/arm64-v8a"
+
+          find "$PLUGIN_JNI" \
+            -maxdepth 1 \
+            -type f \
+            -name "*.so" \
+            -printf "%f %s bytes\n" \
+            | sort
+
+      - name: Configure renderer metadata
+        run: |
+          set -eux
+
+          APP_DIR="$PLUGIN_DIR/app"
+
+          mkdir -p "$APP_DIR/src/main"
+
+          cat > "$APP_DIR/src/main/AndroidManifest.xml" <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-              <uses-sdk
-                  android:minSdkVersion="26"
-                  android:targetSdkVersion="35" />
-
               <application
                   android:allowBackup="false"
-                  android:extractNativeLibs="true"
                   android:label="@string/app_name"
                   android:supportsRtl="true">
 
@@ -595,63 +481,48 @@ jobs:
 
                   <meta-data
                       android:name="fclPlugin_V2"
-                      android:resource="@string/config" />
+                      android:value="true" />
 
                   <meta-data
                       android:name="renderer"
                       android:value="MyTurnipZink:libglxshim.so:libEGL_mesa.so" />
 
                   <meta-data
-                      android:name="driver"
-                      android:value="Mesa Turnip 26.3.0-devel" />
-
-                  <meta-data
                       android:name="des"
-                      android:value="Mesa Turnip + Android Kopper Zink" />
+                      android:value="Mesa 26.3-devel Zink + Turnip KGSL" />
 
                   <meta-data
                       android:name="pojavEnv"
-                      android:value="LIBGL_ES=3:POJAV_RENDERER=opengles3_desktopgl_zink_kopper:MESA_LOADER_DRIVER_OVERRIDE=zink:LIB_MESA_NAME=libglxshim.so:MESA_GL_VERSION_OVERRIDE=4.6:MESA_GLSL_VERSION_OVERRIDE=460:force_glsl_extensions_warn=true:allow_higher_compat_version=true:allow_glsl_extension_directive_midshader=true:FD_GRALLOC_FORCE_LINEAR=1:ZINK_DEBUG=norp:force_gl_renderer=MyTurnipZink | OpenGL 4.6:force_gl_vendor=Mesa / Turnip / Zink" />
+                      android:value="POJAV_RENDERER=opengles3_desktopgl_zink_kopper;MESA_LOADER_DRIVER_OVERRIDE=zink;LIB_MESA_NAME=libglxshim.so;LIBGL_ES=3;MESA_GL_VERSION_OVERRIDE=4.6;MESA_GLSL_VERSION_OVERRIDE=460;force_glsl_extensions_warn=true;allow_higher_compat_version=true;allow_glsl_extension_directive_midshader=true;FD_GRALLOC_FORCE_LINEAR=1;ZINK_DEBUG=norp;force_gl_renderer=MyTurnipZink | OpenGL 4.6;force_gl_vendor=Mesa / Turnip / Zink" />
 
                   <meta-data
                       android:name="boatEnv"
-                      android:value="LIBGL_ES=3:POJAV_RENDERER=opengles3_desktopgl_zink_kopper:MESA_LOADER_DRIVER_OVERRIDE=zink:LIB_MESA_NAME=libglxshim.so:MESA_GL_VERSION_OVERRIDE=4.6:MESA_GLSL_VERSION_OVERRIDE=460:force_glsl_extensions_warn=true:allow_higher_compat_version=true:allow_glsl_extension_directive_midshader=true:FD_GRALLOC_FORCE_LINEAR=1:ZINK_DEBUG=norp:force_gl_renderer=MyTurnipZink | OpenGL 4.6:force_gl_vendor=Mesa / Turnip / Zink" />
+                      android:value="POJAV_RENDERER=opengles3_desktopgl_zink_kopper;MESA_LOADER_DRIVER_OVERRIDE=zink;LIB_MESA_NAME=libglxshim.so;LIBGL_ES=3;MESA_GL_VERSION_OVERRIDE=4.6;MESA_GLSL_VERSION_OVERRIDE=460;force_glsl_extensions_warn=true;allow_higher_compat_version=true;allow_glsl_extension_directive_midshader=true;FD_GRALLOC_FORCE_LINEAR=1;ZINK_DEBUG=norp" />
 
               </application>
 
           </manifest>
           EOF
 
-      # ============================================================
-      # 22. Set application version
-      # ============================================================
-      - name: Set plugin version
-        run: |
-          set -eux
-
-          PLUGIN="$RUNNER_TEMP/RendererPlugin-v2"
-
-          if [ -f "$PLUGIN/gradle.properties" ]; then
-            cat >> "$PLUGIN/gradle.properties" <<EOF
-
-          MYTURNIPZINK_VERSION_CODE=${VERSION_CODE}
-          MYTURNIPZINK_VERSION_NAME=${VERSION_NAME}
+          cat > "$APP_DIR/src/main/res/values/strings.xml" <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">MyTurnipZink</string>
+          </resources>
           EOF
-          fi
 
-          find "$PLUGIN/app/src/main" -maxdepth 5 -type f | sort
-
-      # ============================================================
-      # 23. Patch application version in Gradle if possible
-      # ============================================================
-      - name: Patch Android application version
+      - name: Set renderer version
         run: |
           set -eux
 
-          PLUGIN="$RUNNER_TEMP/RendererPlugin-v2"
+          APP_BUILD="$PLUGIN_DIR/app/build.gradle"
 
-          if [ -f "$PLUGIN/app/build.gradle" ]; then
-            python3 - "$PLUGIN/app/build.gradle" <<'PY'
+          if [ ! -f "$APP_BUILD" ]; then
+            echo "ERROR: $APP_BUILD not found"
+            exit 1
+          fi
+
+          python3 - "$APP_BUILD" <<'PY'
           from pathlib import Path
           import re
           import sys
@@ -660,179 +531,103 @@ jobs:
           s = p.read_text()
 
           s = re.sub(
-              r'versionCode\s*=\s*[0-9]+',
-              'versionCode = 46',
-              s
+              r'versionCode\s+\d+',
+              'versionCode 461',
+              s,
+              count=1
           )
 
           s = re.sub(
-              r'versionName\s*=\s*["\'][^"\']*["\']',
-              'versionName = "0.46"',
-              s
+              r'versionName\s+["\'][^"\']+["\']',
+              'versionName "0.46.1"',
+              s,
+              count=1
           )
 
           p.write_text(s)
           PY
-          fi
 
-          if [ -f "$PLUGIN/app/build.gradle.kts" ]; then
-            python3 - "$PLUGIN/app/build.gradle.kts" <<'PY'
-          from pathlib import Path
-          import re
-          import sys
+      - name: Verify Android project
+        run: |
+          set -eux
 
-          p = Path(sys.argv[1])
-          s = p.read_text()
+          cd "$PLUGIN_DIR"
 
-          s = re.sub(
-              r'versionCode\s*=\s*[0-9]+',
-              'versionCode = 46',
-              s
-          )
+          find app/src/main \
+            -maxdepth 4 \
+            -type f \
+            -print \
+            | sort
 
-          s = re.sub(
-              r'versionName\s*=\s*"[^"]*"',
-              'versionName = "0.46"',
-              s
-          )
+          test -f app/src/main/AndroidManifest.xml
+          test -d app/src/main/jniLibs/arm64-v8a
 
-          p.write_text(s)
-          PY
-          fi
-
-      # ============================================================
-      # 24. Build renderer APK
-      # ============================================================
       - name: Build renderer APK
-        working-directory: ${{ runner.temp }}/RendererPlugin-v2
         run: |
           set -eux
+
+          cd "$PLUGIN_DIR"
 
           chmod +x ./gradlew
 
           ./gradlew \
             --no-daemon \
             --stacktrace \
-            assembleDebug
+            :app:assembleDebug
 
-      # ============================================================
-      # 25. Locate APK
-      # ============================================================
-      - name: Locate APK
-        run: |
-          set -eux
-
-          find "$RUNNER_TEMP/RendererPlugin-v2/app/build/outputs" \
-            -type f \
-            -name '*.apk' \
-            -print
-
-      # ============================================================
-      # 26. Rename final APK
-      # ============================================================
-      - name: Prepare final APK
-        run: |
-          set -eux
-
-          mkdir -p "$GITHUB_WORKSPACE/output"
-
-          APK="$(find \
-            "$RUNNER_TEMP/RendererPlugin-v2/app/build/outputs/apk/debug" \
-            -type f \
-            -name '*.apk' \
-            | head -n 1)"
-
-          if [ -z "$APK" ]; then
-            echo "ERROR: APK not found"
-            find "$RUNNER_TEMP/RendererPlugin-v2/app/build/outputs" -type f -print
-            exit 1
-          fi
-
-          cp "$APK" \
-            "$GITHUB_WORKSPACE/output/MyTurnipZink-v0.46-debug.apk"
-
-          ls -lh "$GITHUB_WORKSPACE/output/MyTurnipZink-v0.46-debug.apk"
-
-      # ============================================================
-      # 27. APK verification
-      # ============================================================
       - name: Verify APK
         run: |
           set -eux
 
-          APK="$GITHUB_WORKSPACE/output/MyTurnipZink-v0.46-debug.apk"
+          APK_DIR="$PLUGIN_DIR/app/build/outputs/apk/debug"
 
+          find "$APK_DIR" \
+            -type f \
+            -name "*.apk" \
+            -print
+
+          APK="$(find "$APK_DIR" \
+            -type f \
+            -name "*.apk" \
+            | head -n 1)"
+
+          test -n "$APK"
           test -f "$APK"
 
-          "$ANDROID_SDK_ROOT/build-tools/35.0.0/aapt" dump badging "$APK" || true
+          echo "APK=$APK" >> "$GITHUB_ENV"
 
           unzip -l "$APK" | grep -E \
-            'lib/arm64-v8a/.*\.so|AndroidManifest.xml' \
-            | head -n 100
+            "lib/arm64-v8a/(libvulkan_freedreno|libEGL_mesa|libGLESv2_mesa|libzink_dri|libglxshim|libc\+\+_shared)\.so"
 
-          echo
-          echo "Checking required libraries inside APK..."
-
-          unzip -l "$APK" | grep 'lib/arm64-v8a/libvulkan_freedreno.so'
-          unzip -l "$APK" | grep 'lib/arm64-v8a/libglxshim.so'
-          unzip -l "$APK" | grep 'lib/arm64-v8a/libEGL_mesa.so'
-          unzip -l "$APK" | grep 'lib/arm64-v8a/libzink_dri.so'
-
-      # ============================================================
-      # 28. Generate build information
-      # ============================================================
-      - name: Generate build information
+      - name: Check APK size
         run: |
           set -eux
 
-          cat > "$GITHUB_WORKSPACE/output/BUILD_INFO.txt" <<EOF
-          MyTurnipZink #46
+          ls -lh "$APK"
 
-          Version: ${VERSION_NAME}
-          Version code: ${VERSION_CODE}
-
-          Mesa:
-          Repository: ${MESA_REPO}
-          Commit: ${MESA_REF}
-
-          Vulkan driver:
-          Turnip / Freedreno
-          KMD: KGSL
-          Android API: ${ANDROID_API}
-          NDK: ${ANDROID_NDK_VERSION}
-
-          Renderer:
-          opengles3_desktopgl_zink_kopper
-
-          Zink:
-          Android Kopper payload from IronizedZink
-
-          GPU target:
-          ARM64 / Adreno Vulkan devices
-
-          Main environment:
-          LIBGL_ES=3
-          POJAV_RENDERER=opengles3_desktopgl_zink_kopper
-          MESA_LOADER_DRIVER_OVERRIDE=zink
-          LIB_MESA_NAME=libglxshim.so
-          MESA_GL_VERSION_OVERRIDE=4.6
-          MESA_GLSL_VERSION_OVERRIDE=460
-          FD_GRALLOC_FORCE_LINEAR=1
-          ZINK_DEBUG=norp
-          EOF
-
-          cat "$GITHUB_WORKSPACE/output/BUILD_INFO.txt"
-
-      # ============================================================
-      # 29. Upload renderer APK
-      # ============================================================
       - name: Upload renderer APK
         uses: actions/upload-artifact@v4
         with:
           name: MyTurnipZink-APK
-          path: |
-            output/MyTurnipZink-v0.46-debug.apk
-            output/BUILD_INFO.txt
+          path: ${{ env.APK }}
           if-no-files-found: error
           retention-days: 90
 
+      - name: Build summary
+        run: |
+          {
+            echo "## MyTurnipZink #46.1"
+            echo
+            echo "- Mesa commit: \`${MESA_COMMIT}\`"
+            echo "- Android API: \`${ANDROID_API}\`"
+            echo "- NDK: \`${NDK_VERSION}\`"
+            echo "- Architecture: \`arm64-v8a\`"
+            echo "- Vulkan driver: \`freedreno / Turnip\`"
+            echo "- Gallium driver: \`Zink\`"
+            echo "- KMD: \`KGSL\`"
+            echo "- Renderer: \`opengles3_desktopgl_zink_kopper\`"
+            echo "- APK: \`MyTurnipZink-APK\`"
+            echo
+            echo "Zink and Turnip are built from the same Mesa source tree."
+            echo "libglxshim.so is supplied by IronizedZink."
+          } >> "$GITHUB_STEP_SUMMARY"
