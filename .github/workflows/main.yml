@@ -128,6 +128,7 @@ jobs:
           meson setup build \
             --cross-file ../android-aarch64.txt \
             --native-file ../native.txt \
+            --wrap-mode=nofallback \
             --prefix "$GITHUB_WORKSPACE/install" \
             -Dbuildtype=release \
             -Dstrip=true \
@@ -143,10 +144,7 @@ jobs:
             -Dprecomp-compiler=auto \
             -Ddraw-use-llvm=false \
             -Dspirv-tools=disabled \
-            -Dlibarchive-3.7.2:openssl=disabled \
             -Dzstd=disabled \
-            -Degl-lib-suffix=_mesa \
-            -Dgles-lib-suffix=_mesa \
             -Dshared-glapi=enabled \
             -Dgallium-drivers=zink \
             -Dvulkan-drivers=freedreno \
