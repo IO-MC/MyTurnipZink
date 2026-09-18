@@ -1,4 +1,4 @@
-name: Build MyTurnipZink #46.1
+name: Build MyTurnipZink #46.2
 
 on:
   workflow_dispatch:
@@ -169,7 +169,7 @@ jobs:
 
           cd "$MESA_DIR"
 
-          git fetch --depth=1 origin "$MESA_COMMIT"
+          git fetch --unshallow origin
           git checkout "$MESA_COMMIT"
 
           git log -1 --oneline
@@ -548,14 +548,14 @@ jobs:
 
           s = re.sub(
               r'versionCode\s+\d+',
-              'versionCode 461',
+              'versionCode 462',
               s,
               count=1
           )
 
           s = re.sub(
               r'versionName\s+["\'][^"\']+["\']',
-              'versionName "0.46.1"',
+              'versionName "0.46.2"',
               s,
               count=1
           )
