@@ -208,7 +208,7 @@ jobs:
             -Dspirv-tools=disabled \
             -Dshader-cache=disabled \
             -Dzstd=disabled \
-            -Dzlib=disabled \
+            -Dzlib=enabled \
             -Dshared-glapi=enabled \
             -Dgallium-drivers=zink \
             -Dvulkan-drivers=freedreno \
