@@ -1,23 +1,27 @@
 name: Build MyTurnipZink Renderer APK
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-24.04
 
     steps:
-      # ============================================================
-      # 1. Checkout this repository
-      # ============================================================
-
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ============================================================
-      # 2. Android SDK
-      # ============================================================
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
@@ -26,22 +30,16 @@ jobs:
 
       - name: Install Android SDK and NDK
         run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
           sdkmanager \
             "platform-tools" \
-            "platforms;android-35" \
-            "platforms;android-36" \
-            "build-tools;35.0.0" \
-            "build-tools;36.0.0" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
             "ndk;28.2.13676358"
-
-      # ============================================================
-      # 3. Build dependencies
-      # ============================================================
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
-
           sudo apt-get install -y \
             python3-venv \
             python3-pip \
@@ -60,18 +58,17 @@ jobs:
             unzip \
             zip \
             patchelf \
+            file \
+            binutils \
             libexpat1-dev \
             libelf-dev \
             libdrm-dev \
             zlib1g-dev \
             libzstd-dev \
             libxml2-dev \
-            libarchive-dev \
             llvm-18 \
             llvm-18-dev \
             clang-18 \
-            libclang-18-dev \
-            libclang-cpp-dev \
             lld-18 \
             llvm-spirv-18 \
             libllvmspirvlib-18-dev \
@@ -79,9 +76,7 @@ jobs:
             spirv-tools
 
           python3 -m venv "$HOME/meson-venv"
-
           "$HOME/meson-venv/bin/pip" install --upgrade pip
-
           "$HOME/meson-venv/bin/pip" install \
             "meson>=1.4.0,<2.0" \
             packaging \
@@ -90,59 +85,33 @@ jobs:
 
           echo "$HOME/meson-venv/bin" >> "$GITHUB_PATH"
 
-      # ============================================================
-      # 4. Check tools
-      # ============================================================
-
-      - name: Check build environment
+      - name: Check host toolchain
         run: |
-          echo "=== Meson ==="
-          meson --version
-
-          echo "=== Ninja ==="
-          ninja --version
-
-          echo "=== Python ==="
-          python3 --version
-
-          echo "=== LLVM ==="
-          /usr/bin/llvm-config-18 --version
-
-          echo "=== Clang ==="
-          /usr/bin/clang-18 --version
-
-          echo "=== Java ==="
+          set -eux
           java -version
-
-      # ============================================================
-      # 5. Clone Mesa
-      # ============================================================
+          meson --version
+          ninja --version
+          /usr/bin/clang-18 --version
+          /usr/bin/llvm-config-18 --version
 
       - name: Clone Mesa
         run: |
+          rm -rf "$GITHUB_WORKSPACE/mesa"
           git clone \
             https://gitlab.freedesktop.org/mesa/mesa.git \
-            mesa
+            "$GITHUB_WORKSPACE/mesa"
 
-          cd mesa
-
+          cd "$GITHUB_WORKSPACE/mesa"
           git checkout 8d68f369fc1a95bd701600f99b9c45d5da8e6068
 
-      - name: Show Mesa version
-        working-directory: mesa
-        run: |
           echo "=== Mesa commit ==="
           git rev-parse HEAD
-
-          echo "=== Mesa log ==="
           git log -1 --oneline
-
-          echo "=== Mesa project ==="
           grep '^project(' meson.build | head -1
 
-      # ============================================================
-      # 6. Build native Mesa compiler
-      # ============================================================
+          # Prevent the Android build from trying to use the problematic
+          # libarchive subproject path seen in earlier runs.
+          rm -f subprojects/libarchive.wrap
 
       - name: Build native Mesa CLC compiler
         working-directory: mesa
@@ -151,8 +120,8 @@ jobs:
           CXX: /usr/bin/clang++-18
           LLVM_CONFIG: /usr/bin/llvm-config-18
         run: |
-          rm -rf build-compiler
-          rm -rf "$GITHUB_WORKSPACE/mesa-compiler"
+          set -eux
+          rm -rf build-compiler "$GITHUB_WORKSPACE/mesa-compiler"
 
           meson setup build-compiler \
             --prefix "$GITHUB_WORKSPACE/mesa-compiler" \
@@ -164,64 +133,23 @@ jobs:
             -Dmesa-clc=enabled \
             -Dinstall-mesa-clc=true
 
-          meson compile -C build-compiler
-
+          meson compile -C build-compiler -j2
           meson install -C build-compiler
 
-      - name: Verify native Mesa CLC
-        run: |
-          echo "=== Mesa compiler files ==="
-
-          find "$GITHUB_WORKSPACE/mesa-compiler" \
-            -maxdepth 4 \
-            -type f \
-            -print | sort
-
-          echo "=== mesa_clc ==="
-
           test -x "$GITHUB_WORKSPACE/mesa-compiler/bin/mesa_clc"
+          "$GITHUB_WORKSPACE/mesa-compiler/bin/mesa_clc" --help >/dev/null
 
-          "$GITHUB_WORKSPACE/mesa-compiler/bin/mesa_clc" \
-            --help >/dev/null
-
-          echo "mesa_clc OK"
-
-          echo "=== vtn_bindgen2 ==="
-
-          if [ -x "$GITHUB_WORKSPACE/mesa-compiler/bin/vtn_bindgen2" ]; then
-            "$GITHUB_WORKSPACE/mesa-compiler/bin/vtn_bindgen2" \
-              --help >/dev/null || true
-
-            echo "vtn_bindgen2 OK"
-          else
-            echo "vtn_bindgen2 not installed"
-          fi
-
-      - name: Add Mesa compiler to PATH
+      - name: Add native Mesa compiler to PATH
         run: |
           echo "$GITHUB_WORKSPACE/mesa-compiler/bin" >> "$GITHUB_PATH"
-
-      - name: Check Mesa compiler PATH
-        run: |
           command -v mesa_clc
           mesa_clc --help >/dev/null
-          echo "mesa_clc PATH OK"
-
-          if command -v vtn_bindgen2 >/dev/null 2>&1; then
-            command -v vtn_bindgen2
-          else
-            echo "vtn_bindgen2 not in PATH"
-          fi
-
-      # ============================================================
-      # 7. Android cross file
-      # ============================================================
 
       - name: Create Android cross file
         run: |
           NDK="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
 
-          cat > android-aarch64.txt <<EOF
+          cat > "$GITHUB_WORKSPACE/android-aarch64.txt" <<EOF
           [constants]
           ndk = '$NDK'
 
@@ -240,32 +168,24 @@ jobs:
           endian = 'little'
           EOF
 
-          cat android-aarch64.txt
+          cat "$GITHUB_WORKSPACE/android-aarch64.txt"
 
       - name: Check Android compiler
         run: |
+          set -eux
           NDK="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang" --version
+          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" --version
+          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --version
 
-          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang" \
-            --version
-
-          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" \
-            --version
-
-          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" \
-            --version
-
-      # ============================================================
-      # 8. Configure Mesa
-      # ============================================================
-
-      - name: Configure Mesa Android
+      - name: Configure Mesa for Android
         working-directory: mesa
         run: |
-          rm -rf build
+          set -eux
+          rm -rf build "$GITHUB_WORKSPACE/install"
 
           meson setup build \
-            --cross-file ../android-aarch64.txt \
+            --cross-file "$GITHUB_WORKSPACE/android-aarch64.txt" \
             --prefix "$GITHUB_WORKSPACE/install" \
             --buildtype=release \
             --strip \
@@ -286,11 +206,12 @@ jobs:
             -Dspirv-tools=disabled \
             -Dshader-cache=disabled \
             -Dzstd=disabled \
-            -Dzlib=enabled \
+            -Dzlib=disabled \
             -Dshared-glapi=enabled \
             -Dgallium-drivers=zink \
             -Dvulkan-drivers=freedreno \
             -Dfreedreno-kmds=kgsl \
+            -Dallow-fallback-for=libdrm \
             -Dvulkan-beta=true
 
       - name: Show Mesa configuration
@@ -298,370 +219,377 @@ jobs:
         run: |
           meson configure build
 
-      # ============================================================
-      # 9. Build Mesa
-      # ============================================================
-
       - name: Build Mesa
         working-directory: mesa
         run: |
+          set -eux
           meson compile -C build -j2
-
-      # ============================================================
-      # 10. Install Mesa
-      # ============================================================
 
       - name: Install Mesa
         working-directory: mesa
         run: |
-          rm -rf "$GITHUB_WORKSPACE/install"
-
+          set -eux
           meson install -C build
 
-      # ============================================================
-      # 11. Inspect Mesa output
-      # ============================================================
-
-      - name: Inspect Mesa output
+      - name: Verify Mesa output
         run: |
-          echo "============================================================"
-          echo "INSTALLED FILES"
-          echo "============================================================"
+          set -eux
 
-          find "$GITHUB_WORKSPACE/install" \
-            -type f \
-            -print | sort
+          INSTALL="$GITHUB_WORKSPACE/install"
 
-          echo
-          echo "============================================================"
-          echo "SHARED LIBRARIES"
-          echo "============================================================"
+          test -f "$INSTALL/lib/libvulkan_freedreno.so"
+          test -f "$INSTALL/lib/libgallium_dri.so"
+          test -f "$INSTALL/lib/libEGL.so"
 
-          find "$GITHUB_WORKSPACE/install" \
-            -type f \
+          echo "=== Installed libraries ==="
+          find "$INSTALL" -type f \
             \( -name "*.so" -o -name "*.so.*" \) \
             -print | sort
 
-      # ============================================================
-      # 12. Verify Turnip
-      # ============================================================
-
-      - name: Verify Turnip
-        run: |
-          TURNIP="$GITHUB_WORKSPACE/install/lib/libvulkan_freedreno.so"
-
-          test -f "$TURNIP"
-
+          echo
           echo "=== Turnip ==="
-          file "$TURNIP"
-
-          echo
-          echo "=== Architecture ==="
-          readelf -h "$TURNIP" \
+          file "$INSTALL/lib/libvulkan_freedreno.so"
+          readelf -h "$INSTALL/lib/libvulkan_freedreno.so" \
             | grep -E "Class|Machine"
-
-          echo
-          echo "=== Dependencies ==="
-          readelf -d "$TURNIP" \
+          readelf -d "$INSTALL/lib/libvulkan_freedreno.so" \
             | grep NEEDED || true
 
           echo
-          echo "=== SONAME ==="
-          readelf -d "$TURNIP" \
-            | grep SONAME || true
-
-          echo
-          echo "Turnip OK"
-
-      # ============================================================
-      # 13. Verify Zink
-      # ============================================================
-
-      - name: Verify Zink
-        run: |
-          GALLIUM="$GITHUB_WORKSPACE/install/lib/libgallium_dri.so"
-
-          test -f "$GALLIUM"
-
           echo "=== Gallium/Zink ==="
-          file "$GALLIUM"
-
-          echo
-          echo "=== Architecture ==="
-          readelf -h "$GALLIUM" \
+          file "$INSTALL/lib/libgallium_dri.so"
+          readelf -h "$INSTALL/lib/libgallium_dri.so" \
             | grep -E "Class|Machine"
-
-          echo
-          echo "=== Dependencies ==="
-          readelf -d "$GALLIUM" \
+          readelf -d "$INSTALL/lib/libgallium_dri.so" \
             | grep NEEDED || true
-
-          echo
-          echo "=== SONAME ==="
-          readelf -d "$GALLIUM" \
-            | grep SONAME || true
-
-          echo
-          echo "=== Zink strings ==="
-
-          strings "$GALLIUM" \
-            | grep -Ei \
-              "mesa zink|ZINK_DEBUG|ZINK_DESCRIPTORS|zink" \
+          strings "$INSTALL/lib/libgallium_dri.so" \
+            | grep -Ei "mesa zink|ZINK_DEBUG|ZINK_DESCRIPTORS|zink" \
             | head -100 || true
 
           echo
-          echo "Zink OK"
+          echo "=== EGL ==="
+          file "$INSTALL/lib/libEGL.so"
+          readelf -d "$INSTALL/lib/libEGL.so" \
+            | grep NEEDED || true
 
-      # ============================================================
-      # 14. Prepare renderer libraries
-      # ============================================================
-
-      - name: Prepare renderer libraries
+      - name: Clone proven Zink GLX shim package
         run: |
+          rm -rf "$GITHUB_WORKSPACE/IronizedZink"
+          git clone \
+            --depth 1 \
+            https://github.com/GoyDevv/IronizedZink.git \
+            "$GITHUB_WORKSPACE/IronizedZink"
+
+      - name: Assemble renderer runtime
+        run: |
+          set -eux
+
           INSTALL="$GITHUB_WORKSPACE/install"
+          OLD="$GITHUB_WORKSPACE/IronizedZink/app/src/main/jniLibs/arm64-v8a"
+          OUT="$GITHUB_WORKSPACE/renderer-libs"
 
-          rm -rf "$GITHUB_WORKSPACE/renderer-libs"
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
 
-          mkdir -p "$GITHUB_WORKSPACE/renderer-libs"
+          # Copy every native library produced by our Mesa build.
+          # Keeping the full Mesa lib directory avoids missing internal
+          # DT_NEEDED dependencies at runtime.
+          find "$INSTALL/lib" -maxdepth 1 -type f \
+            \( -name "*.so" -o -name "*.so.*" \) \
+            -exec cp -t "$OUT" {} +
 
-          # --------------------------------------------------------
-          # Turnip
-          # --------------------------------------------------------
+          # Keep the library names expected by the desktop-GL bridge.
+          cp "$INSTALL/lib/libEGL.so" "$OUT/libEGL_mesa.so"
+          cp "$INSTALL/lib/libgallium_dri.so" "$OUT/libzink_dri.so"
 
-          cp \
-            "$INSTALL/lib/libvulkan_freedreno.so" \
-            "$GITHUB_WORKSPACE/renderer-libs/libvulkan_freedreno.so"
+          # Proven Android GLX entry shim used by an existing Zalith Zink plugin.
+          test -s "$OLD/libglxshim.so"
+          cp "$OLD/libglxshim.so" "$OUT/libglxshim.so"
 
-          # --------------------------------------------------------
-          # Mesa EGL
-          #
-          # Zalith's Zink path expects libEGL_mesa.so.
-          # Keep libEGL.so as well for dependency compatibility.
-          # --------------------------------------------------------
+          # Existing Zink stacks sometimes need this Android compatibility lib.
+          if [ -s "$OLD/libcutils.so" ]; then
+            cp "$OLD/libcutils.so" "$OUT/libcutils.so"
+          fi
 
-          cp \
-            "$INSTALL/lib/libEGL.so" \
-            "$GITHUB_WORKSPACE/renderer-libs/libEGL.so"
-
-          cp \
-            "$INSTALL/lib/libEGL.so" \
-            "$GITHUB_WORKSPACE/renderer-libs/libEGL_mesa.so"
-
-          # --------------------------------------------------------
-          # Mesa GLES
-          # --------------------------------------------------------
-
-          cp \
-            "$INSTALL/lib/libGLESv2.so" \
-            "$GITHUB_WORKSPACE/renderer-libs/libGLESv2.so"
-
-          # --------------------------------------------------------
-          # Gallium driver
-          #
-          # Keep original libgallium_dri.so because libEGL.so
-          # has a DT_NEEDED dependency on this exact name.
-          # Also provide zink_dri.so for Mesa DRI lookup.
-          # --------------------------------------------------------
-
-          cp \
-            "$INSTALL/lib/libgallium_dri.so" \
-            "$GITHUB_WORKSPACE/renderer-libs/libgallium_dri.so"
-
-          cp \
-            "$INSTALL/lib/libgallium_dri.so" \
-            "$GITHUB_WORKSPACE/renderer-libs/zink_dri.so"
-
-          # --------------------------------------------------------
-          # Mesa dependencies
-          # --------------------------------------------------------
-
-          for f in \
-            libglapi.so \
-            libexpat.so \
-            libxml2.so
-          do
-            if [ -f "$INSTALL/lib/$f" ]; then
-              cp \
-                "$INSTALL/lib/$f" \
-                "$GITHUB_WORKSPACE/renderer-libs/$f"
-            fi
-          done
-
-          # --------------------------------------------------------
-          # libc++ runtime from NDK r28c
-          # --------------------------------------------------------
-
+          # Use the exact same NDK libc++ runtime as the new Mesa build.
           NDK="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
-
           LIBCXX="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
+          test -s "$LIBCXX"
+          cp "$LIBCXX" "$OUT/libc++_shared.so"
 
-          test -f "$LIBCXX"
-
-          cp \
-            "$LIBCXX" \
-            "$GITHUB_WORKSPACE/renderer-libs/libc++_shared.so"
-
-          echo
-          echo "============================================================"
-          echo "RENDERER LIBRARIES"
-          echo "============================================================"
-
-          find "$GITHUB_WORKSPACE/renderer-libs" \
-            -type f \
-            -print | sort
+          echo "=== Renderer runtime ==="
+          find "$OUT" -maxdepth 1 -type f \
+            -printf "%f\n" | sort
 
           echo
-          echo "============================================================"
-          echo "ARCHITECTURES"
-          echo "============================================================"
+          echo "=== Architectures ==="
+          find "$OUT" -maxdepth 1 -type f -name "*.so" \
+            -print0 | xargs -0 -r file
 
-          find "$GITHUB_WORKSPACE/renderer-libs" \
-            -type f \
-            -name "*.so" \
-            -print0 \
-            | xargs -0 -r file
-
-      # ============================================================
-      # 15. Inspect Android dependencies
-      # ============================================================
-
-      - name: Inspect renderer dependencies
+      - name: Verify GLX shim and runtime
         run: |
-          echo "============================================================"
-          echo "TURNIP DEPENDENCIES"
-          echo "============================================================"
+          set -eux
 
-          readelf -d \
-            "$GITHUB_WORKSPACE/renderer-libs/libvulkan_freedreno.so" \
+          OUT="$GITHUB_WORKSPACE/renderer-libs"
+
+          test -s "$OUT/libglxshim.so"
+          test -s "$OUT/libEGL_mesa.so"
+          test -s "$OUT/libzink_dri.so"
+          test -s "$OUT/libvulkan_freedreno.so"
+          test -s "$OUT/libc++_shared.so"
+
+          echo "=== libglxshim.so ==="
+          file "$OUT/libglxshim.so"
+          readelf -h "$OUT/libglxshim.so" \
+            | grep -E "Class|Machine"
+          readelf -d "$OUT/libglxshim.so" \
             | grep NEEDED || true
 
           echo
-          echo "============================================================"
-          echo "GALLIUM DEPENDENCIES"
-          echo "============================================================"
-
-          readelf -d \
-            "$GITHUB_WORKSPACE/renderer-libs/libgallium_dri.so" \
+          echo "=== libEGL_mesa.so ==="
+          readelf -d "$OUT/libEGL_mesa.so" \
             | grep NEEDED || true
 
           echo
-          echo "============================================================"
-          echo "EGL DEPENDENCIES"
-          echo "============================================================"
-
-          readelf -d \
-            "$GITHUB_WORKSPACE/renderer-libs/libEGL_mesa.so" \
+          echo "=== libzink_dri.so ==="
+          readelf -d "$OUT/libzink_dri.so" \
             | grep NEEDED || true
-
-      # ============================================================
-      # 16. Clone current RendererPlugin-v2
-      # ============================================================
 
       - name: Clone RendererPlugin-v2
         run: |
           rm -rf "$GITHUB_WORKSPACE/RendererPlugin-v2"
-
           git clone \
             --depth 1 \
             https://github.com/ZalithLauncher/RendererPlugin-v2.git \
             "$GITHUB_WORKSPACE/RendererPlugin-v2"
 
           cd "$GITHUB_WORKSPACE/RendererPlugin-v2"
-
-          echo "=== RendererPlugin-v2 commit ==="
           git rev-parse HEAD
-
-          echo "=== RendererPlugin-v2 log ==="
           git log -1 --oneline
 
-      # ============================================================
-      # 17. Prepare APK native libraries
-      # ============================================================
-
-      - name: Copy libraries into RendererPlugin-v2
+      - name: Install renderer libraries into APK project
         run: |
+          set -eux
+
           JNI="$GITHUB_WORKSPACE/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
 
           rm -rf "$JNI"
-
           mkdir -p "$JNI"
 
-          cp \
-            "$GITHUB_WORKSPACE/renderer-libs/"*.so \
-            "$JNI/"
+          cp "$GITHUB_WORKSPACE/renderer-libs/"*.so "$JNI/"
 
-          echo "============================================================"
-          echo "APK NATIVE LIBRARIES"
-          echo "============================================================"
+          echo "=== APK native libraries ==="
+          find "$JNI" -maxdepth 1 -type f \
+            -printf "%f\n" | sort
 
-          find "$JNI" \
-            -type f \
-            -print | sort
+      - name: Configure renderer project
+        run: |
+          set -eux
+
+          PROJECT="$GITHUB_WORKSPACE/RendererPlugin-v2"
+
+          cat > "$PROJECT/app/build.gradle.kts" <<'EOF'
+          import com.launchers_plugin.renderer.buildscript.buildEnvs
+          import com.launchers_plugin.renderer.buildscript.buildJsonValue
+          import com.launchers_plugin.renderer.buildscript.legacyManifest
+          import com.launchers_plugin.renderer.buildscript.nativePath
+          import com.launchers_plugin.renderer.buildscript.renderer
+          import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+          plugins {
+              id("com.launchers_plugin.renderer.dsl")
+              alias(libs.plugins.android.application)
+              id("com.google.devtools.ksp")
+              id("kotlinx-serialization")
+          }
+
+          android {
+              namespace = "com.launchers_plugin.renderer"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.launchers_plugin.renderer.myturnipzink"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+
+              buildFeatures {
+                  resValues = true
+              }
+
+              packagingOptions {
+                  jniLibs {
+                      useLegacyPackaging = true
+                  }
+              }
+
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                      isShrinkResources = false
+                  }
+
+                  configureEach {
+                      resValue("string", "app_name", "MyTurnipZink")
+
+                      resValue("string", "config", buildJsonValue {
+                          renderer(
+                              displayName = "MyTurnipZink",
+                              rendererId = "opengles3_desktopgl_zink_kopper",
+                              rendererGLPath = nativePath("libglxshim.so"),
+                              rendererEGLPath = nativePath("libEGL_mesa.so"),
+                              dlopenLibPaths = emptyList(),
+                              env = buildEnvs {
+                                  normal("LIBGL_ES", "3")
+                                  normal("MESA_LOADER_DRIVER_OVERRIDE", "zink")
+                                  normal("MESA_GL_VERSION_OVERRIDE", "4.6")
+                                  normal("MESA_GLSL_VERSION_OVERRIDE", "460")
+                                  normal("force_glsl_extensions_warn", "true")
+                                  normal("allow_higher_compat_version", "true")
+                                  normal("allow_glsl_extension_directive_midshader", "true")
+                                  normal("force_gl_renderer", "MyTurnipZink | OpenGL 4.6")
+                                  normal("force_gl_vendor", "Mesa / Turnip / Zink")
+                              },
+                              minMCVer = null,
+                              maxMCVer = null,
+                          )
+                      })
+
+                      manifestPlaceholders.putAll(legacyManifest {
+                          displayName = "MyTurnipZink"
+                          rendererName = "MyTurnipZink"
+                          rendererLib = "libglxshim.so"
+                          eglLib = "/libEGL_mesa.so"
+                          minMCVer = ""
+                          maxMCVer = ""
+
+                          boatEnv {
+                              put("LIBGL_ES", "3")
+                              put("POJAV_RENDERER", "opengles3_desktopgl_zink_kopper")
+                              put("MESA_LOADER_DRIVER_OVERRIDE", "zink")
+                              put("MESA_GL_VERSION_OVERRIDE", "4.6")
+                              put("MESA_GLSL_VERSION_OVERRIDE", "460")
+                              put("force_glsl_extensions_warn", "true")
+                              put("allow_higher_compat_version", "true")
+                              put("allow_glsl_extension_directive_midshader", "true")
+                              put("DLOPEN", "libglxshim.so")
+                          }
+
+                          pojavEnv {
+                              put("LIBGL_ES", "3")
+                              put("POJAV_RENDERER", "opengles3_desktopgl_zink_kopper")
+                              put("MESA_LOADER_DRIVER_OVERRIDE", "zink")
+                              put("MESA_GL_VERSION_OVERRIDE", "4.6")
+                              put("MESA_GLSL_VERSION_OVERRIDE", "460")
+                              put("force_glsl_extensions_warn", "true")
+                              put("allow_higher_compat_version", "true")
+                              put("allow_glsl_extension_directive_midshader", "true")
+                              put("DLOPEN", "libglxshim.so")
+                          }
+                      })
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_1_8
+                  targetCompatibility = JavaVersion.VERSION_1_8
+              }
+          }
+
+          kotlin {
+              compilerOptions {
+                  jvmTarget.set(JvmTarget.JVM_1_8)
+              }
+          }
+
+          dependencies {
+              implementation(libs.androidx.annotation)
+          }
+          EOF
+
+          cat > "$PROJECT/app/src/main/AndroidManifest.xml" <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <application
+                  android:allowBackup="true"
+                  android:icon="@drawable/img_app"
+                  android:label="@string/app_name"
+                  android:supportsRtl="true">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <meta-data
+                      android:name="fclPlugin_V2"
+                      android:resource="@string/config" />
+
+                  <meta-data
+                      android:name="fclPlugin"
+                      android:value="true" />
+
+                  <meta-data
+                      android:name="des"
+                      android:value="Mesa Turnip + Zink for Zalith Launcher 2" />
+
+                  <meta-data
+                      android:name="renderer"
+                      android:value="\${renderer}" />
+
+                  <meta-data
+                      android:name="boatEnv"
+                      android:value="\${boatEnv}" />
+
+                  <meta-data
+                      android:name="pojavEnv"
+                      android:value="\${pojavEnv}" />
+
+                  <meta-data
+                      android:name="minMCVer"
+                      android:value="\${minMCVer}" />
+
+                  <meta-data
+                      android:name="maxMCVer"
+                      android:value="\${maxMCVer}" />
+
+              </application>
+
+          </manifest>
+          EOF
+
+          cat > "$PROJECT/app/src/main/res/values/strings.xml" <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="title_backend_type">Mesa Turnip + Zink backend</string>
+          </resources>
+          EOF
+
+          echo "=== Final build.gradle.kts ==="
+          sed -n '1,280p' "$PROJECT/app/build.gradle.kts"
 
           echo
-          echo "============================================================"
-          echo "APK NATIVE LIBRARY ARCHITECTURES"
-          echo "============================================================"
+          echo "=== Final AndroidManifest.xml ==="
+          sed -n '1,220p' "$PROJECT/app/src/main/AndroidManifest.xml"
 
-          find "$JNI" \
-            -type f \
-            -name "*.so" \
-            -print0 \
-            | xargs -0 -r file
-
-      # ============================================================
-      # 18. Replace renderer configuration in build.gradle.kts
-      # ============================================================
-
-      - name: Configure MyTurnipZink renderer
+      - name: Build renderer APK
         working-directory: RendererPlugin-v2
         run: |
-          python3 <<'PY'
-          from pathlib import Path
+          set -eux
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug --stacktrace --no-daemon
 
-          path = Path("app/build.gradle.kts")
-          text = path.read_text(encoding="utf-8")
+      - name: Verify APK
+        run: |
+          set -eux
 
-          start = text.find("renderer(")
+          APK=$(find "$GITHUB_WORKSPACE/RendererPlugin-v2/app/build/outputs/apk/debug" \
+            -maxdepth 1 -type f -name "*.apk" | head -n1)
 
-          if start == -1:
-              raise SystemExit(
-                  "ERROR: renderer(...) block was not found in app/build.gradle.kts"
-              )
-
-          depth = 0
-          quote = None
-          triple_quote = False
-          line_comment = False
-          block_comment = False
-          escape = False
-          end = None
-
-          i = start
-
-          while i < len(text):
-              ch = text[i]
-              nxt = text[i + 1] if i + 1 < len(text) else ""
-
-              if line_comment:
-                  if ch == "\n":
-                      line_comment = False
-                  i += 1
-                  continue
-
-              if block_comment:
-                  if ch == "*" and nxt == "/":
-                      block_comment = False
-                      i += 2
-                      continue
-                  i += 1
-                  continue
-
-              if quote is None:
-                  if ch == "/" and nxt == "/":
-                      line_comment = True
-                      i += 2
-                      continue
-
-                  if ch == "/" and nxt == "*":
-             
+    
