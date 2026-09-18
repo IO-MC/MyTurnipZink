@@ -8,15 +8,19 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      # ------------------------------------------------------------
+
+      # ============================================================
       # 1. Checkout
-      # ------------------------------------------------------------
+      # ============================================================
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ------------------------------------------------------------
-      # 2. Android SDK
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # 2. Android SDK + NDK
+      # ============================================================
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
@@ -26,9 +30,11 @@ jobs:
         run: |
           sdkmanager "ndk;28.2.13676358"
 
-      # ------------------------------------------------------------
-      # 3. Build dependencies
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # 3. Host build dependencies
+      # ============================================================
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -45,6 +51,7 @@ jobs:
             gettext \
             git \
             cmake \
+            ninja-build \
             ccache \
             glslang-tools \
             libexpat1-dev \
@@ -57,7 +64,11 @@ jobs:
             llvm-18 \
             llvm-18-dev \
             clang-18 \
-            lld-18
+            lld-18 \
+            llvm-spirv-18 \
+            libllvmspirvlib-18-dev \
+            spirv-headers \
+            spirv-tools
 
           python3 -m venv "$HOME/meson-venv"
 
@@ -71,22 +82,33 @@ jobs:
 
           echo "$HOME/meson-venv/bin" >> "$GITHUB_PATH"
 
-      # ------------------------------------------------------------
-      # 4. Check tools
-      # ------------------------------------------------------------
-      - name: Check build tools
+
+      # ============================================================
+      # 4. Check host tools
+      # ============================================================
+
+      - name: Check host tools
         run: |
+          echo "=== Meson ==="
           meson --version
+
+          echo "=== Ninja ==="
           ninja --version
+
+          echo "=== Python ==="
           python3 --version
 
-          echo "=== Host LLVM ==="
+          echo "=== LLVM ==="
           /usr/bin/llvm-config-18 --version
+
+          echo "=== Clang ==="
           /usr/bin/clang-18 --version
 
-      # ------------------------------------------------------------
+
+      # ============================================================
       # 5. Clone exact Mesa commit
-      # ------------------------------------------------------------
+      # ============================================================
+
       - name: Clone Mesa
         run: |
           git clone \
@@ -97,38 +119,49 @@ jobs:
 
           git checkout 8d68f369fc1a95bd701600f99b9c45d5da8e6068
 
+
+      # ============================================================
+      # 6. Verify Mesa version
+      # ============================================================
+
       - name: Show Mesa version
         working-directory: mesa
         run: |
-          git log -1 --oneline
+          echo "=== Mesa commit ==="
           git rev-parse HEAD
+
+          echo "=== Mesa log ==="
+          git log -1 --oneline
+
+          echo "=== Mesa project ==="
           grep '^project(' meson.build | head -1
 
-      # ------------------------------------------------------------
-      # 6. Build native mesa_clc
+
+      # ============================================================
+      # 7. Build native mesa_clc
       #
-      # This is a HOST executable.
-      # It is NOT an Android library.
+      # IMPORTANT:
+      # This is an x86_64 HOST executable.
+      # It is NOT the Android renderer.
       #
-      # Mesa's Android cross-build can then use:
-      #   -Dmesa-clc=system
-      #
-      # without requiring target LLVM libraries.
-      # ------------------------------------------------------------
+      # Mesa's Android documentation recommends preparing
+      # mesa_clc on the host before the Android cross-build.
+      # ============================================================
+
       - name: Build native Mesa CLC compiler
         working-directory: mesa
         env:
-          CC: clang-18
-          CXX: clang++-18
+          CC: /usr/bin/clang-18
+          CXX: /usr/bin/clang++-18
           LLVM_CONFIG: /usr/bin/llvm-config-18
         run: |
           rm -rf build-compiler
+          rm -rf "$GITHUB_WORKSPACE/mesa-compiler"
 
           meson setup build-compiler \
-            --native-file ../native.txt \
             --prefix "$GITHUB_WORKSPACE/mesa-compiler" \
-            -Dbuildtype=release \
-            -Dstrip=true \
+            --buildtype=release \
+            --strip=true \
             -Dplatforms= \
             -Dgallium-drivers= \
             -Dvulkan-drivers= \
@@ -139,32 +172,66 @@ jobs:
 
           meson install -C build-compiler
 
-          echo "=== Native Mesa compiler ==="
+
+      # ============================================================
+      # 8. Verify native mesa_clc
+      # ============================================================
+
+      - name: Verify native Mesa CLC
+        run: |
+          echo "=== Installed Mesa compiler files ==="
+
           find "$GITHUB_WORKSPACE/mesa-compiler" \
             -maxdepth 3 \
             -type f \
             -print | sort
 
-      # ------------------------------------------------------------
-      # 7. Put native mesa_clc / vtn_bindgen2 on PATH
-      # ------------------------------------------------------------
+          echo "=== mesa_clc ==="
+
+          test -x "$GITHUB_WORKSPACE/mesa-compiler/bin/mesa_clc"
+
+          "$GITHUB_WORKSPACE/mesa-compiler/bin/mesa_clc" \
+            --help >/dev/null
+
+          echo "mesa_clc OK"
+
+
+      # ============================================================
+      # 9. Add native Mesa compiler to PATH
+      # ============================================================
+
       - name: Add native Mesa compiler to PATH
         run: |
           echo "$GITHUB_WORKSPACE/mesa-compiler/bin" >> "$GITHUB_PATH"
 
-      - name: Check native Mesa compiler
+
+      # ============================================================
+      # 10. Verify native compiler in PATH
+      # ============================================================
+
+      - name: Check mesa_clc PATH
         run: |
           echo "=== mesa_clc ==="
           command -v mesa_clc
+
           mesa_clc --help >/dev/null
 
           echo "=== vtn_bindgen2 ==="
-          command -v vtn_bindgen2
-          vtn_bindgen2 --help >/dev/null
 
-      # ------------------------------------------------------------
-      # 8. Android cross file
-      # ------------------------------------------------------------
+          if command -v vtn_bindgen2 >/dev/null 2>&1; then
+            command -v vtn_bindgen2
+            vtn_bindgen2 --help >/dev/null || true
+          else
+            echo "vtn_bindgen2 not installed; continuing"
+          fi
+
+
+      # ============================================================
+      # 11. Create Android cross file
+      #
+      # Based on Mesa Android cross-compilation model.
+      # ============================================================
+
       - name: Create Android cross file
         run: |
           NDK="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
@@ -180,7 +247,6 @@ jobs:
           c_ld = 'lld'
           cpp_ld = 'lld'
           strip = ndk / 'toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
-          pkg-config = '/usr/bin/pkg-config'
 
           [host_machine]
           system = 'android'
@@ -189,61 +255,40 @@ jobs:
           endian = 'little'
           EOF
 
-      # ------------------------------------------------------------
-      # 9. Native Meson file
-      # ------------------------------------------------------------
-      - name: Create native file
-        run: |
-          cat > native.txt <<'EOF'
-          [binaries]
-          c = '/usr/bin/clang-18'
-          cpp = '/usr/bin/clang++-18'
-          ar = '/usr/bin/llvm-ar-18'
-          strip = '/usr/bin/llvm-strip-18'
-          c_ld = 'lld'
-          cpp_ld = 'lld'
+          echo "=== Android cross file ==="
+          cat android-aarch64.txt
 
-          [host_machine]
-          system = 'linux'
-          cpu_family = 'x86_64'
-          cpu = 'x86_64'
-          endian = 'little'
-          EOF
 
-      # ------------------------------------------------------------
-      # 10. pkg-config
+      # ============================================================
+      # 12. Configure Android Mesa
       #
-      # We allow host dependencies needed by Mesa's build system,
-      # but DO NOT use host libraries as Android target libraries.
-      # ------------------------------------------------------------
-      - name: Prepare pkg-config
-        run: |
-          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_LIBDIR=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_ALLOW_CROSS=1" >> "$GITHUB_ENV"
+      # IMPORTANT:
+      # mesa-clc=system
+      #
+      # This tells Mesa to use the HOST mesa_clc prepared above.
+      # It prevents CLC from forcing TARGET LLVM into the
+      # Android build.
+      #
+      # Turnip:
+      #   vulkan-drivers=freedreno
+      #
+      # KGSL:
+      #   freedreno-kmds=kgsl
+      #
+      # Zink:
+      #   gallium-drivers=zink
+      # ============================================================
 
-      # ------------------------------------------------------------
-      # 11. NDK LLVM tools
-      # ------------------------------------------------------------
-      - name: Add NDK LLVM tools to PATH
-        run: |
-          echo "$ANDROID_SDK_ROOT/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
-
-      # ------------------------------------------------------------
-      # 12. Configure Mesa for Android
-      # ------------------------------------------------------------
-      - name: Configure Mesa
+      - name: Configure Mesa Android
         working-directory: mesa
         run: |
           rm -rf build
 
           meson setup build \
             --cross-file ../android-aarch64.txt \
-            --native-file ../native.txt \
-            --wrap-mode=nofallback \
             --prefix "$GITHUB_WORKSPACE/install" \
-            -Dbuildtype=release \
-            -Dstrip=true \
+            --buildtype=release \
+            --strip=true \
             -Dplatforms=android \
             -Dplatform-sdk-version=33 \
             -Dandroid-stub=true \
@@ -252,10 +297,11 @@ jobs:
             -Dgles2=enabled \
             -Dgles1=disabled \
             -Dglx=disabled \
+            -Dgbm=disabled \
             -Dmesa-clc=system \
-            -Dprecomp-compiler=auto \
-            -Ddraw-use-llvm=false \
+            -Dprecomp-compiler=system \
             -Dllvm=disabled \
+            -Ddraw-use-llvm=false \
             -Dspirv-tools=disabled \
             -Dshader-cache=disabled \
             -Dzstd=disabled \
@@ -266,108 +312,193 @@ jobs:
             -Dfreedreno-kmds=kgsl \
             -Dvulkan-beta=true
 
-      # ------------------------------------------------------------
-      # 13. Show final configuration
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # 13. Show final Mesa configuration
+      # ============================================================
+
       - name: Show Mesa configuration
         working-directory: mesa
         run: |
           meson configure build
 
-      # ------------------------------------------------------------
-      # 14. Build
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # 14. Build Mesa
+      # ============================================================
+
       - name: Build Mesa
         working-directory: mesa
         run: |
           meson compile -C build -j2
 
-      # ------------------------------------------------------------
-      # 15. Install
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # 15. Install Mesa
+      # ============================================================
+
       - name: Install Mesa
         working-directory: mesa
         run: |
           meson install -C build
 
-      # ------------------------------------------------------------
-      # 16. Inspect output
-      # ------------------------------------------------------------
-      - name: Inspect installed libraries
+
+      # ============================================================
+      # 16. Inspect installed files
+      # ============================================================
+
+      - name: Inspect installed files
         run: |
-          echo "=== Installed files ==="
-          find install -type f -print | sort
+          echo "=== All installed files ==="
+
+          find "$GITHUB_WORKSPACE/install" \
+            -type f \
+            -print | sort
 
           echo "=== Shared libraries ==="
-          find install -type f \
+
+          find "$GITHUB_WORKSPACE/install" \
+            -type f \
             \( -name "*.so" -o -name "*.so.*" \) \
             -print | sort
 
-      # ------------------------------------------------------------
-      # 17. Check Turnip
-      # ------------------------------------------------------------
-      - name: Check Turnip library
+
+      # ============================================================
+      # 17. Verify Turnip
+      # ============================================================
+
+      - name: Verify Turnip
         run: |
-          test -f install/lib/libvulkan_freedreno.so
+          TURNIP="$GITHUB_WORKSPACE/install/lib/libvulkan_freedreno.so"
 
-          file install/lib/libvulkan_freedreno.so
+          test -f "$TURNIP"
 
-          echo "=== Turnip dependencies ==="
-          readelf -d install/lib/libvulkan_freedreno.so || true
+          echo "=== Turnip file ==="
+          file "$TURNIP"
 
-      # ------------------------------------------------------------
-      # 18. Check Zink
-      # ------------------------------------------------------------
-      - name: Check Zink
+          echo "=== Turnip architecture ==="
+          readelf -h "$TURNIP" | grep -E \
+            "Class|Machine"
+
+          echo "=== Turnip dynamic dependencies ==="
+          readelf -d "$TURNIP" || true
+
+
+      # ============================================================
+      # 18. Verify Zink
+      # ============================================================
+
+      - name: Verify Zink
         run: |
-          test -f install/lib/libgallium_dri.so
+          ZINK="$GITHUB_WORKSPACE/install/lib/libgallium_dri.so"
+
+          test -f "$ZINK"
+
+          echo "=== Zink/Gallium file ==="
+          file "$ZINK"
 
           echo "=== Zink strings ==="
-          strings install/lib/libgallium_dri.so \
-            | grep -E "ZINK|zink" \
+
+          strings "$ZINK" \
+            | grep -Ei "mesa zink|ZINK_DEBUG|ZINK_DESCRIPTORS" \
             | head -50 || true
 
-          echo "=== DRI library ==="
-          file install/lib/libgallium_dri.so
 
-      # ------------------------------------------------------------
-      # 19. Package
-      # ------------------------------------------------------------
+      # ============================================================
+      # 19. Package Turnip + Zink
+      # ============================================================
+
       - name: Package Turnip + Zink
         run: |
           rm -rf artifact
+
           mkdir -p artifact/lib/dri
 
-          cp install/lib/libvulkan_freedreno.so \
+
+          # --------------------------------------------------------
+          # Turnip
+          # --------------------------------------------------------
+
+          cp \
+            "$GITHUB_WORKSPACE/install/lib/libvulkan_freedreno.so" \
             artifact/libvulkan_freedreno.so
 
-          if [ -f install/lib/libEGL.so ]; then
-            cp install/lib/libEGL.so artifact/libEGL.so
+
+          # --------------------------------------------------------
+          # EGL
+          # --------------------------------------------------------
+
+          if [ -f "$GITHUB_WORKSPACE/install/lib/libEGL.so" ]; then
+            cp \
+              "$GITHUB_WORKSPACE/install/lib/libEGL.so" \
+              artifact/libEGL.so
           fi
 
-          if [ -f install/lib/libGLESv2.so ]; then
-            cp install/lib/libGLESv2.so artifact/libGLESv2.so
+
+          # --------------------------------------------------------
+          # GLES2
+          # --------------------------------------------------------
+
+          if [ -f "$GITHUB_WORKSPACE/install/lib/libGLESv2.so" ]; then
+            cp \
+              "$GITHUB_WORKSPACE/install/lib/libGLESv2.so" \
+              artifact/libGLESv2.so
           fi
 
-          cp install/lib/libgallium_dri.so \
+
+          # --------------------------------------------------------
+          # Zink/Gallium
+          # --------------------------------------------------------
+
+          cp \
+            "$GITHUB_WORKSPACE/install/lib/libgallium_dri.so" \
             artifact/lib/dri/zink_dri.so
+
+
+          # --------------------------------------------------------
+          # Supporting libraries
+          # --------------------------------------------------------
 
           for f in \
             libglapi.so \
             libexpat.so \
             libxml2.so
           do
-            if [ -f "install/lib/$f" ]; then
-              cp "install/lib/$f" "artifact/$f"
+            if [ -f "$GITHUB_WORKSPACE/install/lib/$f" ]; then
+              cp \
+                "$GITHUB_WORKSPACE/install/lib/$f" \
+                "artifact/$f"
             fi
           done
 
-          echo "=== Artifact ==="
-          find artifact -type f -print | sort
 
-          echo "=== File types ==="
-          find artifact -type f -name "*.so" -print0 \
+          # --------------------------------------------------------
+          # Show artifact
+          # --------------------------------------------------------
+
+          echo "=== Artifact files ==="
+
+          find artifact \
+            -type f \
+            -print | sort
+
+
+          # --------------------------------------------------------
+          # Check architecture
+          # --------------------------------------------------------
+
+          echo "=== Artifact architectures ==="
+
+          find artifact \
+            -type f \
+            -name "*.so" \
+            -print0 \
             | xargs -0 file
+
+
+          # --------------------------------------------------------
+          # Metadata
+          # --------------------------------------------------------
 
           cat > artifact/meta.json <<'EOF'
           {
@@ -375,7 +506,7 @@ jobs:
             "name": "MyTurnipZink",
             "description": "Mesa Turnip Vulkan driver + Zink OpenGL renderer for Adreno",
             "author": "IO-MC",
-            "packageVersion": "4",
+            "packageVersion": "5",
             "vendor": "Mesa",
             "driverVersion": "Mesa 26.3.0-devel",
             "minApi": 28,
@@ -383,15 +514,22 @@ jobs:
           }
           EOF
 
+
+          # --------------------------------------------------------
+          # ZIP
+          # --------------------------------------------------------
+
           cd artifact
 
           zip -9 -r \
             ../MyTurnipZink-TurnipZink.zip \
             .
 
-      # ------------------------------------------------------------
+
+      # ============================================================
       # 20. Upload artifact
-      # ------------------------------------------------------------
+      # ============================================================
+
       - name: Upload Turnip + Zink artifact
         uses: actions/upload-artifact@v4
         with:
