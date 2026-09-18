@@ -89,36 +89,52 @@ jobs:
           java-version: '21'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        run: |
+          set -eux
+
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+
+          if [ -z "$SDK_ROOT" ] || [ ! -d "$SDK_ROOT" ]; then
+            SDK_ROOT="/usr/local/lib/android/sdk"
+          fi
+
+          test -d "$SDK_ROOT"
+          test -d "$SDK_ROOT/cmdline-tools"
+
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" \
+            -type f \
+            -name sdkmanager \
+            -perm -u+x \
+            | sort -V \
+            | tail -n 1)"
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager not found under $SDK_ROOT/cmdline-tools"
+            exit 1
+          fi
+
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+
+          echo "Android SDK: $SDK_ROOT"
+          echo "sdkmanager: $SDKMANAGER"
+          "$SDKMANAGER" --version
 
       - name: Install Android SDK packages
         run: |
           set -eux
 
-          yes | sdkmanager --licenses >/dev/null || true
+          SDKMANAGER="$(command -v sdkmanager)"
 
-          sdkmanager \
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+
+          "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-${ANDROID_API}" \
             "build-tools;35.0.0" \
             "ndk;${NDK_VERSION}"
-
-      - name: Setup Python environment
-        run: |
-          set -eux
-
-          python3 -m venv "$RUNNER_TEMP/mesa-venv"
-
-          "$RUNNER_TEMP/mesa-venv/bin/python" -m pip install --upgrade pip
-
-          "$RUNNER_TEMP/mesa-venv/bin/pip" install \
-            "meson>=1.4" \
-            mako \
-            PyYAML \
-            packaging
-
-          echo "$RUNNER_TEMP/mesa-venv/bin" >> "$GITHUB_PATH"
-
+            
       - name: Export Android NDK environment
         run: |
           set -eux
