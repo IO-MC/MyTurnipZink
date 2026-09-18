@@ -21,7 +21,6 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-          cache: gradle
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
@@ -592,4 +591,5 @@ jobs:
           APK=$(find "$GITHUB_WORKSPACE/RendererPlugin-v2/app/build/outputs/apk/debug" \
             -maxdepth 1 -type f -name "*.apk" | head -n1)
 
-    
+          test -n "$APK"
+   
