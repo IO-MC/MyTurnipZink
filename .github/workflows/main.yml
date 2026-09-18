@@ -287,7 +287,7 @@ jobs:
             --cross-file ../android-aarch64.txt \
             --prefix "$GITHUB_WORKSPACE/install" \
             --buildtype=release \
-            --strip=true \
+            --strip \
             -Dplatforms=android \
             -Dplatform-sdk-version=33 \
             -Dandroid-stub=true \
