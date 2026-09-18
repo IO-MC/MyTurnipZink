@@ -135,20 +135,20 @@ jobs:
             -Dplatform-sdk-version=33 \
             -Dandroid-stub=true \
             -Dandroid-libbacktrace=disabled \
-            -Degl=enabled
-            -Dgles2=enabled
-            -Dgles1=disabled
-            -Dglx=disabled
-            -Dmesa-clc=disabled
-            -Dprecomp-compiler=disabled
-            -Ddraw-use-llvm=false
-            -Degl-lib-suffix=_mesa
-            -Dgles-lib-suffix=_mesa
-            -Dshared-glapi=enabled
-            -Dgallium-drivers=zink
-            -Dvulkan-drivers=freedreno
-            -Dfreedreno-kmds=kgsl
-            -Dvulkan-beta=true
+            -Degl=enabled \
+            -Dgles2=enabled \
+            -Dgles1=disabled \
+            -Dglx=disabled \
+            -Dmesa-clc=disabled \
+            -Dprecomp-compiler=disabled \
+            -Ddraw-use-llvm=false \
+            -Degl-lib-suffix=_mesa \
+            -Dgles-lib-suffix=_mesa \
+            -Dshared-glapi=enabled \
+            -Dgallium-drivers=zink \
+            -Dvulkan-drivers=freedreno \
+            -Dfreedreno-kmds=kgsl \
+            -Dvulkan-beta=true \
             -Dllvm=disabled
 
       - name: Check Zink configuration
