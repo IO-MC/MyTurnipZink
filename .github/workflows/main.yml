@@ -145,6 +145,7 @@ jobs:
             -Ddraw-use-llvm=false \
             -Dspirv-tools=disabled \
             -Dzstd=disabled \
+            -Dzlib=disabled \
             -Dshared-glapi=enabled \
             -Dgallium-drivers=zink \
             -Dvulkan-drivers=freedreno \
