@@ -233,10 +233,12 @@ jobs:
 
       - name: Add native Mesa compiler to PATH
         run: |
-          echo "$MESA_COMPILER_DIR/bin" >> "$GITHUB_PATH"
+          MESA_CLC_DIR="$MESA_COMPILER_DIR/install/bin"
 
-          test -x "$MESA_COMPILER_DIR/bin/mesa_clc"
-          "$MESA_COMPILER_DIR/bin/mesa_clc" --help >/dev/null || true
+          test -x "$MESA_CLC_DIR/mesa_clc"
+          echo "$MESA_CLC_DIR" >> "$GITHUB_PATH"
+
+          "$MESA_CLC_DIR/mesa_clc" --help >/dev/null || true
 
       - name: Prepare Mesa dependencies
         run: |
