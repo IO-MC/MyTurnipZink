@@ -268,6 +268,41 @@ jobs:
           print("Disabled host libelf detection for Android cross build")
           PYCODE
 
+          # Mesa's normal zlib dependency lookup can resolve the host x86_64
+          # zlib during an Android cross build. Use the Android NDK sysroot
+          # libz instead, because Freedreno uses gz* APIs in its output code.
+          python3 - <<PYCODE
+          from pathlib import Path
+
+          path = Path("$MESA_DIR/meson.build")
+          text = path.read_text()
+
+          old = """dep_zlib = dependency('zlib', version : '>= 1.2.3',
+          allow_fallback: true,
+          required : get_option('zlib'))
+          if dep_zlib.found()
+            pre_args += '-DHAVE_ZLIB'
+          endif
+          """
+          new = """if with_platform_android
+            dep_zlib = cc.find_library('z', required : get_option('zlib'))
+          else
+            dep_zlib = dependency('zlib', version : '>= 1.2.3',
+                                  allow_fallback: true,
+                                  required : get_option('zlib'))
+          endif
+          if dep_zlib.found()
+            pre_args += '-DHAVE_ZLIB'
+          endif
+          """
+
+          if old not in text:
+            raise SystemExit("Expected Mesa zlib detection block was not found")
+
+          path.write_text(text.replace(old, new, 1))
+          print("Forced Android zlib lookup to the NDK sysroot")
+          PYCODE
+
       - name: Create Android cross file
         run: |
           cat > "$WORK_ROOT/android-aarch64.txt" <<EOF
@@ -342,7 +377,7 @@ jobs:
             -Dprecomp-compiler=system \
             -Dspirv-tools=disabled \
             -Dzstd=disabled \
-            -Dzlib=disabled \
+            -Dzlib=enabled \
             -Dshader-cache=disabled \
             -Dbuild-tests=false
 
@@ -604,4 +639,3 @@ jobs:
               echo "- APK: not generated"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-          
