@@ -360,10 +360,17 @@ jobs:
           # HMI is only required by Android's platform Vulkan HAL loader.
           llvm-readelf -h "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep -E 'Class:.*ELF64|Machine:.*AArch64'
           llvm-nm -D --defined-only "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep -E 'vkGetInstanceProcAddr$|vk_icdGetInstanceProcAddr$' || true
-          if llvm-readelf -d "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep -qE 'NEEDED.*libc\+\+_shared\.so'; then
-            echo 'Unexpected libc++_shared.so dependency in Turnip driver'
-            exit 1
-          fi
+
+          # Mesa/Turnip built with the Android NDK may depend on libc++_shared.so.
+          # Package the exact NDK runtime with the driver instead of rejecting it.
+          NDK_LIBCXX="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
+          test -f "$NDK_LIBCXX"
+          cp "$NDK_LIBCXX" "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libc++_shared.so"
+
+          echo "Turnip dynamic dependencies:"
+          llvm-readelf -d "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep 'NEEDED' || true
+          echo "Bundled libc++ runtime:"
+          file "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libc++_shared.so"
 
           echo "TURNIP_DRIVER_ROOT=$DRIVER_ROOT" >> "$GITHUB_ENV"
 
