@@ -273,18 +273,22 @@ jobs:
           # libz instead, because Freedreno uses gz* APIs in its output code.
           python3 - <<PYCODE
           from pathlib import Path
+          import re
 
           path = Path("$MESA_DIR/meson.build")
           text = path.read_text()
 
-          old = """dep_zlib = dependency('zlib', version : '>= 1.2.3',
-          allow_fallback: true,
-          required : get_option('zlib'))
-          if dep_zlib.found()
-            pre_args += '-DHAVE_ZLIB'
-          endif
-          """
-          new = """if with_platform_android
+          pattern = re.compile(
+              r"dep_zlib = dependency\('zlib', version : '>= 1\.2\.3',\s*"
+              r"allow_fallback: true,\s*"
+              r"required : get_option\('zlib'\)\s*"
+              r"\)\s*"
+              r"if dep_zlib\.found\(\)\s*"
+              r"pre_args \+= '-DHAVE_ZLIB'\s*"
+              r"endif"
+          )
+
+          replacement = """if with_platform_android
             dep_zlib = cc.find_library('z', required : get_option('zlib'))
           else
             dep_zlib = dependency('zlib', version : '>= 1.2.3',
@@ -293,13 +297,13 @@ jobs:
           endif
           if dep_zlib.found()
             pre_args += '-DHAVE_ZLIB'
-          endif
-          """
+          endif"""
 
-          if old not in text:
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
             raise SystemExit("Expected Mesa zlib detection block was not found")
 
-          path.write_text(text.replace(old, new, 1))
+          path.write_text(text)
           print("Forced Android zlib lookup to the NDK sysroot")
           PYCODE
 
