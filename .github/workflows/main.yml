@@ -26,20 +26,11 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-
-      # ============================================================
-      # 1. Checkout project
-      # ============================================================
       - name: Checkout project
         uses: actions/checkout@v4
 
-      # ============================================================
-      # 2. Install Linux build dependencies
-      # ============================================================
       - name: Install build dependencies
         run: |
-          set -eux
-
           sudo apt-get update
 
           sudo apt-get install -y \
@@ -73,179 +64,84 @@ jobs:
 
           python3 -m venv "$MESON_VENV"
 
-          "$MESON_VENV/bin/python" -m pip install \
-            --upgrade \
-            pip \
-            setuptools \
-            wheel
+          "$MESON_VENV/bin/python" -m pip install --upgrade pip
 
           "$MESON_VENV/bin/python" -m pip install \
             "meson>=1.4,<2.0" \
-            "mako>=1.2"
+            "mako>=1.2" \
+            "PyYAML"
 
           echo "$MESON_VENV/bin" >> "$GITHUB_PATH"
 
           echo "VIRTUAL_ENV=$MESON_VENV" >> "$GITHUB_ENV"
           echo "PATH=$MESON_VENV/bin:$PATH" >> "$GITHUB_ENV"
 
-          echo "=== Python ==="
-          "$MESON_VENV/bin/python" --version
-
-          echo "=== Pip ==="
-          "$MESON_VENV/bin/python" -m pip --version
-
-          echo "=== Meson ==="
           "$MESON_VENV/bin/meson" --version
 
-          echo "=== Mako ==="
-          "$MESON_VENV/bin/python" -c \
-            "import mako; print(mako.__version__)"
-
-      # ============================================================
-      # 3. Setup Java 21
-      # ============================================================
       - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
 
-      # ============================================================
-      # 4. Setup Android SDK
-      # ============================================================
       - name: Setup Android SDK
         run: |
-          set -eux
+          SDK_ROOT="/usr/local/lib/android/sdk"
 
-          SDK_ROOT="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$(find "$SDK_ROOT" -type f -name sdkmanager -perm -u+x | head -n 1)"
 
-          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
-
-          CMDLINE_TOOLS=""
-
-          if [ -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
-            CMDLINE_TOOLS="$SDK_ROOT/cmdline-tools/latest/bin"
-          else
-            for d in "$SDK_ROOT"/cmdline-tools/*/bin; do
-              if [ -x "$d/sdkmanager" ]; then
-                CMDLINE_TOOLS="$d"
-                break
-              fi
-            done
-          fi
-
-          if [ -z "$CMDLINE_TOOLS" ]; then
-            echo "ERROR: sdkmanager not found"
-            find "$SDK_ROOT/cmdline-tools" \
-              -maxdepth 5 \
-              -type f \
-              -name sdkmanager \
-              -print || true
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager not found"
             exit 1
           fi
 
-          echo "$CMDLINE_TOOLS" >> "$GITHUB_PATH"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
 
-          yes | "$CMDLINE_TOOLS/sdkmanager" \
-            --licenses >/dev/null || true
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
 
-          "$CMDLINE_TOOLS/sdkmanager" --version
-
-      # ============================================================
-      # 5. Install Android SDK packages
-      # ============================================================
       - name: Install Android SDK packages
         run: |
-          set -eux
+          SDK_ROOT="$ANDROID_HOME"
 
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-${ANDROID_API}" \
-            "build-tools;35.0.0" \
-            "ndk;${ANDROID_NDK_VERSION}"
+          SDKMANAGER="$(find "$SDK_ROOT" -type f -name sdkmanager -perm -u+x | head -n 1)"
 
-          yes | sdkmanager --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools"
+          "$SDKMANAGER" "platforms;android-33"
+          "$SDKMANAGER" "build-tools;35.0.0"
+          "$SDKMANAGER" "ndk;${ANDROID_NDK_VERSION}"
 
-      # ============================================================
-      # 6. Export Android NDK environment
-      # ============================================================
       - name: Export Android NDK environment
         run: |
-          set -eux
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
 
-          SDK_ROOT="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT" >> "$GITHUB_ENV"
 
-          NDK_ROOT="$SDK_ROOT/ndk/${ANDROID_NDK_VERSION}"
+          echo "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
 
-          test -d "$NDK_ROOT"
-
-          echo "ANDROID_NDK_HOME=$NDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$NDK_ROOT" >> "$GITHUB_ENV"
-
-          echo "$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin" \
-            >> "$GITHUB_PATH"
-
-      # ============================================================
-      # 7. Verify complete toolchain
-      # ============================================================
       - name: Verify toolchain
         run: |
-          set -eux
-
-          echo "================================================"
-          echo "Python"
-          echo "================================================"
-          which python
           python --version
-
-          echo "================================================"
-          echo "Meson"
-          echo "================================================"
-          which meson
           meson --version
-
           "$MESON_VENV/bin/meson" --version
 
-          echo "================================================"
-          echo "Mako"
-          echo "================================================"
-          python -c "import mako; print(mako.__version__)"
+          "$MESON_VENV/bin/python" -c "import mako; print('Mako:', mako.__version__)"
+          "$MESON_VENV/bin/python" -c "import yaml; print('PyYAML:', yaml.__version__)"
 
-          echo "================================================"
-          echo "Ninja"
-          echo "================================================"
           ninja --version
-
-          echo "================================================"
-          echo "Clang"
-          echo "================================================"
-          clang --version
-
-          echo "================================================"
-          echo "Java"
-          echo "================================================"
+          clang --version | head -n 1
           java -version
+          echo "$ANDROID_NDK_HOME"
 
-          echo "================================================"
-          echo "NDK"
-          echo "================================================"
-          "$ANDROID_NDK_ROOT/ndk-build" --version
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang" \
+            --version | head -n 1
 
-          echo "================================================"
-          echo "Android AArch64 Clang"
-          echo "================================================"
-
-          "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang" \
-            --version
-
-      # ============================================================
-      # 8. Clone Mesa
-      # ============================================================
       - name: Clone Mesa
         run: |
-          set -eux
-
           rm -rf "$MESA_DIR"
 
           git clone \
@@ -256,31 +152,14 @@ jobs:
 
           git checkout "$MESA_COMMIT"
 
-          echo "================================================"
-          echo "Mesa commit"
-          echo "================================================"
-
           git rev-parse HEAD
-
-          echo "================================================"
-          echo "Mesa description"
-          echo "================================================"
-
           git describe --always --tags --dirty || true
 
-      # ============================================================
-      # 9. Prepare Mesa native compiler
-      # ============================================================
       - name: Prepare Mesa native compiler
         run: |
-          set -eux
-
-          cd "$MESA_DIR"
-
           rm -rf "$MESA_COMPILER_DIR"
 
-          "$MESON_VENV/bin/meson" setup \
-            "$MESA_COMPILER_DIR" \
+          "$MESON_VENV/bin/meson" setup "$MESA_COMPILER_DIR" \
             --prefix="$MESA_COMPILER_DIR/install" \
             --buildtype=release \
             --strip \
@@ -299,79 +178,32 @@ jobs:
           "$MESON_VENV/bin/meson" install \
             -C "$MESA_COMPILER_DIR"
 
-          echo "================================================"
-          echo "mesa_clc"
-          echo "================================================"
-
-          find "$MESA_COMPILER_DIR" \
-            -type f \
-            \( \
-              -name mesa_clc \
-              -o -name 'mesa_clc*' \
-            \) \
-            -print
-
-      # ============================================================
-      # 10. Add Mesa native compiler to PATH
-      # ============================================================
       - name: Add native Mesa compiler to PATH
         run: |
-          set -eux
+          echo "$MESA_COMPILER_DIR/bin" >> "$GITHUB_PATH"
 
-          COMPILER_BIN="$MESA_COMPILER_DIR/bin"
+          test -x "$MESA_COMPILER_DIR/bin/mesa_clc"
 
-          test -d "$COMPILER_BIN"
+          "$MESA_COMPILER_DIR/bin/mesa_clc" --help >/dev/null || true
 
-          echo "$COMPILER_BIN" >> "$GITHUB_PATH"
-
-          export PATH="$COMPILER_BIN:$MESON_VENV/bin:$PATH"
-
-          command -v mesa_clc
-
-          mesa_clc --help >/dev/null
-
-          echo "mesa_clc:"
-          command -v mesa_clc
-
-      # ============================================================
-      # 11. Prepare Mesa dependencies
-      # ============================================================
       - name: Prepare Mesa dependencies
         run: |
-          set -eux
+          rm -f "$MESA_DIR/subprojects/libarchive.wrap"
 
-          cd "$MESA_DIR"
-
-          rm -f subprojects/libarchive.wrap
-
-          echo "Mesa subproject files:"
-          find subprojects \
-            -maxdepth 1 \
-            -type f \
-            -print \
-            | sort \
-            | head -100
-
-      # ============================================================
-      # 12. Create Android cross file
-      # ============================================================
       - name: Create Android cross file
         run: |
-          set -eux
-
           cat > "$WORK_ROOT/android-aarch64.txt" <<EOF
           [binaries]
-          c = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang'
-          cpp = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang++'
-          ar = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
-          strip = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
-          ranlib = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib'
-          ld = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld'
+          c = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang'
+          cpp = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang++'
+          ar = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
+          strip = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
+          ranlib = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib'
+          ld = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld'
           pkg-config = '/usr/bin/pkg-config'
 
           [properties]
           needs_exe_wrapper = true
-          sys_root = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot'
 
           [host_machine]
           system = 'android'
@@ -380,15 +212,8 @@ jobs:
           endian = 'little'
           EOF
 
-          cat "$WORK_ROOT/android-aarch64.txt"
-
-      # ============================================================
-      # 13. Create native Meson file
-      # ============================================================
       - name: Create native Meson file
         run: |
-          set -eux
-
           cat > "$WORK_ROOT/native.txt" <<EOF
           [binaries]
           c = '/usr/bin/clang'
@@ -396,6 +221,7 @@ jobs:
           ar = '/usr/bin/llvm-ar'
           strip = '/usr/bin/llvm-strip'
           ranlib = '/usr/bin/llvm-ranlib'
+          ld = '/usr/bin/ld.lld'
           pkg-config = '/usr/bin/pkg-config'
           python = '$MESON_VENV/bin/python'
 
@@ -406,34 +232,12 @@ jobs:
           endian = 'little'
           EOF
 
-          cat "$WORK_ROOT/native.txt"
-
-      # ============================================================
-      # 14. Configure Mesa Android
-      # ============================================================
       - name: Configure Mesa
+        working-directory: ${{ env.MESA_DIR }}
         run: |
-          set -eux
-
-          cd "$MESA_DIR"
-
           rm -rf build
-          rm -rf "$MESA_INSTALL_DIR"
 
-          mkdir -p "$MESA_INSTALL_DIR"
-
-          export PATH="$MESA_COMPILER_DIR/bin:$MESON_VENV/bin:$PATH"
-
-          command -v python
-          command -v meson
-          command -v mesa_clc
-
-          python --version
-          meson --version
-          mesa_clc --help >/dev/null
-
-          "$MESON_VENV/bin/meson" setup \
-            build \
+          "$MESON_VENV/bin/meson" setup build \
             --cross-file "$WORK_ROOT/android-aarch64.txt" \
             --native-file "$WORK_ROOT/native.txt" \
             --prefix "$MESA_INSTALL_DIR" \
@@ -464,371 +268,228 @@ jobs:
             -Dshader-cache=disabled \
             -Dbuild-tests=false
 
-      # ============================================================
-      # 15. Show Mesa configuration summary
-      # ============================================================
       - name: Show Mesa configuration
+        working-directory: ${{ env.MESA_DIR }}
         run: |
-          set -eux
-
-          cd "$MESA_DIR"
-
           "$MESON_VENV/bin/meson" configure build
 
-      # ============================================================
-      # 16. Build Mesa
-      # ============================================================
       - name: Build Mesa
+        working-directory: ${{ env.MESA_DIR }}
         run: |
-          set -eux
-
-          cd "$MESA_DIR"
-
-          export PATH="$MESA_COMPILER_DIR/bin:$MESON_VENV/bin:$PATH"
-
           "$MESON_VENV/bin/meson" compile \
             -C build \
             -j "$(nproc)"
 
-      # ============================================================
-      # 17. Install Mesa
-      # ============================================================
       - name: Install Mesa
+        working-directory: ${{ env.MESA_DIR }}
         run: |
-          set -eux
-
-          cd "$MESA_DIR"
-
           "$MESON_VENV/bin/meson" install \
             -C build
 
-          echo "================================================"
-          echo "Installed Mesa files"
-          echo "================================================"
-
-          find "$MESA_INSTALL_DIR" \
-            -type f \
-            -print \
-            | sort
-
-      # ============================================================
-      # 18. Inspect important Mesa libraries
-      # ============================================================
       - name: Inspect Mesa libraries
+        working-directory: ${{ env.MESA_DIR }}
         run: |
-          set -eux
-
-          echo "================================================"
-          echo "Turnip"
-          echo "================================================"
+          echo "=== Installed libraries ==="
 
           find "$MESA_INSTALL_DIR" \
+            \( -name "libvulkan_freedreno.so" \
+            -o -name "libgallium_dri.so" \
+            -o -name "libEGL_mesa.so" \
+            -o -name "libGLESv2_mesa.so" \) \
             -type f \
-            -name 'libvulkan_freedreno.so' \
             -print
 
-          echo "================================================"
-          echo "Gallium / Zink"
-          echo "================================================"
+          echo "=== Architecture ==="
 
           find "$MESA_INSTALL_DIR" \
+            \( -name "libvulkan_freedreno.so" \
+            -o -name "libgallium_dri.so" \
+            -o -name "libEGL_mesa.so" \
+            -o -name "libGLESv2_mesa.so" \) \
             -type f \
-            -name 'libgallium_dri.so' \
-            -print
+            -exec file {} \;
 
-          echo "================================================"
-          echo "EGL"
-          echo "================================================"
-
-          find "$MESA_INSTALL_DIR" \
-            -type f \
-            -name 'libEGL_mesa.so' \
-            -print
-
-          echo "================================================"
-          echo "GLES"
-          echo "================================================"
-
-          find "$MESA_INSTALL_DIR" \
-            -type f \
-            -name 'libGLESv2_mesa.so' \
-            -print
-
-          echo "================================================"
-          echo "Architecture"
-          echo "================================================"
-
-          while IFS= read -r f; do
-            echo "------------------------------------------------"
-            echo "$f"
-            file "$f"
-          done < <(
-            find "$MESA_INSTALL_DIR" \
-              -type f \
-              \( \
-                -name 'libvulkan_freedreno.so' \
-                -o -name 'libgallium_dri.so' \
-                -o -name 'libEGL_mesa.so' \
-                -o -name 'libGLESv2_mesa.so' \
-              \)
-          )
-
-      # ============================================================
-      # 19. Prepare renderer jniLibs
-      # ============================================================
       - name: Prepare renderer plugin libraries
         run: |
-          set -eux
+          JNI_DIR="$WORK_ROOT/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
 
-          LIB_DIR="$WORK_ROOT/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
+          rm -rf "$JNI_DIR"
+          mkdir -p "$JNI_DIR"
 
-          rm -rf "$LIB_DIR"
-          mkdir -p "$LIB_DIR"
+          find "$MESA_INSTALL_DIR" \
+            -name "libvulkan_freedreno.so" \
+            -type f \
+            -exec cp {} "$JNI_DIR/libvulkan_freedreno.so" \; \
+            -quit
 
-          cp \
-            "$MESA_INSTALL_DIR/lib/libvulkan_freedreno.so" \
-            "$LIB_DIR/libvulkan_freedreno.so"
+          find "$MESA_INSTALL_DIR" \
+            -name "libEGL_mesa.so" \
+            -type f \
+            -exec cp {} "$JNI_DIR/libEGL_mesa.so" \; \
+            -quit
 
-          cp \
-            "$MESA_INSTALL_DIR/lib/libEGL_mesa.so" \
-            "$LIB_DIR/libEGL_mesa.so"
-
-          if [ -f "$MESA_INSTALL_DIR/lib/libGLESv2_mesa.so" ]; then
-            cp \
-              "$MESA_INSTALL_DIR/lib/libGLESv2_mesa.so" \
-              "$LIB_DIR/libGLESv2_mesa.so"
+          if find "$MESA_INSTALL_DIR" -name "libGLESv2_mesa.so" -type f | grep -q .; then
+            find "$MESA_INSTALL_DIR" \
+              -name "libGLESv2_mesa.so" \
+              -type f \
+              -exec cp {} "$JNI_DIR/libGLESv2_mesa.so" \; \
+              -quit
           fi
 
-          cp \
-            "$MESA_INSTALL_DIR/lib/libgallium_dri.so" \
-            "$LIB_DIR/libzink_dri.so"
+          find "$MESA_INSTALL_DIR" \
+            -name "libgallium_dri.so" \
+            -type f \
+            -exec cp {} "$JNI_DIR/libzink_dri.so" \; \
+            -quit
 
-          for f in \
+          for lib in \
             libglapi.so \
             libexpat.so \
             libxml2.so \
             libarchive.so
           do
-            if [ -f "$MESA_INSTALL_DIR/lib/$f" ]; then
-              cp \
-                "$MESA_INSTALL_DIR/lib/$f" \
-                "$LIB_DIR/$f"
+            found="$(find "$MESA_INSTALL_DIR" -name "$lib" -type f | head -n 1 || true)"
+
+            if [ -n "$found" ]; then
+              cp "$found" "$JNI_DIR/$lib"
             fi
           done
 
-          echo "================================================"
-          echo "Mesa renderer libraries"
-          echo "================================================"
+          ls -lh "$JNI_DIR"
 
-          ls -lah "$LIB_DIR"
-
-      # ============================================================
-     # 20. Import IronizedZink compatibility shim
-      # ============================================================
       - name: Import IronizedZink compatibility shim
         run: |
-          set -eux
+          IRONIZED_DIR="$WORK_ROOT/IronizedZink"
 
-          LIB_DIR="$WORK_ROOT/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
-          TMP_DIR="$RUNNER_TEMP/IronizedZink"
-
-          rm -rf "$TMP_DIR"
+          rm -rf "$IRONIZED_DIR"
 
           git clone \
-            --depth=1 \
+            --depth 1 \
             https://github.com/GoyDevv/IronizedZink.git \
-            "$TMP_DIR"
+            "$IRONIZED_DIR"
 
-          echo "================================================"
-          echo "Searching IronizedZink libraries"
-          echo "================================================"
+          JNI_DIR="$WORK_ROOT/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
 
-          find "$TMP_DIR" \
+          GLXSHIM="$(find "$IRONIZED_DIR" \
             -type f \
-            \( \
-              -name 'libglxshim.so' \
-              -o -name 'libcutils.so' \
-              -o -name 'libironized_zink.so' \
-            \) \
-            -print
+            -name "libglxshim.so" \
+            | head -n 1 || true)"
 
-          SRC="$(find "$TMP_DIR" \
-            -path '*arm64-v8a*' \
-            -type f \
-            -name 'libglxshim.so' \
-            -print -quit || true)"
-
-          if [ -n "$SRC" ]; then
-            cp "$SRC" "$LIB_DIR/libglxshim.so"
-          else
-            echo "ERROR: libglxshim.so not found"
+          if [ -z "$GLXSHIM" ]; then
+            echo "Required libglxshim.so not found"
             exit 1
           fi
 
-          SRC="$(find "$TMP_DIR" \
-            -path '*arm64-v8a*' \
-            -type f \
-            -name 'libcutils.so' \
-            -print -quit || true)"
+          cp "$GLXSHIM" "$JNI_DIR/libglxshim.so"
 
-          if [ -n "$SRC" ]; then
-            cp "$SRC" "$LIB_DIR/libcutils.so"
-          fi
+          for lib in \
+            libcutils.so \
+            libironized_zink.so
+          do
+            FOUND="$(find "$IRONIZED_DIR" \
+              -type f \
+              -name "$lib" \
+              | head -n 1 || true)"
 
-          SRC="$(find "$TMP_DIR" \
-            -path '*arm64-v8a*' \
-            -type f \
-            -name 'libironized_zink.so' \
-            -print -quit || true)"
-
-          if [ -n "$SRC" ]; then
-            cp "$SRC" "$LIB_DIR/libironized_zink.so"
-          fi
-
-          echo "================================================"
-          echo "IronizedZink libraries"
-          echo "================================================"
-
-          ls -lah "$LIB_DIR"
-
-      # ============================================================
-      # 21. Add Android libc++ runtime
-      # ============================================================
-      - name: Add Android libc++ runtime
-        run: |
-          set -eux
-
-          LIB_DIR="$WORK_ROOT/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
-
-          CXX_LIB="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
-
-          if [ ! -f "$CXX_LIB" ]; then
-            echo "ERROR: libc++_shared.so not found:"
-            echo "$CXX_LIB"
-            exit 1
-          fi
-
-          cp \
-            "$CXX_LIB" \
-            "$LIB_DIR/libc++_shared.so"
-
-          file "$LIB_DIR/libc++_shared.so"
-          ls -lh "$LIB_DIR/libc++_shared.so"
-
-      # ============================================================
-      # 22. Verify final native libraries
-      # ============================================================
-      - name: Verify renderer libraries
-        run: |
-          set -eux
-
-          LIB_DIR="$WORK_ROOT/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
-
-          REQUIRED_LIBS="
-          libvulkan_freedreno.so
-          libEGL_mesa.so
-          libzink_dri.so
-          libc++_shared.so
-          libglxshim.so
-          "
-
-          for lib in $REQUIRED_LIBS; do
-            test -f "$LIB_DIR/$lib"
-            echo "OK: $lib"
+            if [ -n "$FOUND" ]; then
+              cp "$FOUND" "$JNI_DIR/$lib"
+            fi
           done
 
-          echo
-          echo "================================================"
-          echo "Final arm64-v8a library directory"
-          echo "================================================"
+      - name: Add Android libc++ runtime
+        run: |
+          JNI_DIR="$WORK_ROOT/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
 
-          ls -lah "$LIB_DIR"
+          CXX_SHARED="$(find "$ANDROID_NDK_HOME" \
+            -type f \
+            -path "*/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" \
+            | head -n 1 || true)"
 
-      # ============================================================
-      # 23. Set renderer version
-      # ============================================================
+          if [ -z "$CXX_SHARED" ]; then
+            echo "libc++_shared.so not found"
+            exit 1
+          fi
+
+          cp "$CXX_SHARED" "$JNI_DIR/libc++_shared.so"
+
+          ls -lh "$JNI_DIR/libc++_shared.so"
+
+      - name: Verify renderer libraries
+        run: |
+          JNI_DIR="$WORK_ROOT/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
+
+          required=(
+            "libvulkan_freedreno.so"
+            "libEGL_mesa.so"
+            "libzink_dri.so"
+            "libc++_shared.so"
+            "libglxshim.so"
+          )
+
+          for lib in "${required[@]}"; do
+            if [ ! -f "$JNI_DIR/$lib" ]; then
+              echo "Missing required library: $lib"
+              exit 1
+            fi
+
+            file "$JNI_DIR/$lib"
+          done
+
+          echo "All required renderer libraries are present."
+
       - name: Set renderer version
         run: |
-          set -eux
-
-          GRADLE_FILE="$WORK_ROOT/RendererPlugin-v2/app/build.gradle"
-
-          test -f "$GRADLE_FILE"
+          cd "$WORK_ROOT/RendererPlugin-v2"
 
           sed -i \
-            's/versionCode[[:space:]]\+[0-9]\+/versionCode 463/' \
-            "$GRADLE_FILE" || true
+            's/versionCode[[:space:]]*[=:][[:space:]]*[0-9]*/versionCode 463/' \
+            app/build.gradle \
+            app/build.gradle.kts \
+            2>/dev/null || true
 
           sed -i \
-            's/versionName[[:space:]]\+["'\''][^"'\'']*["'\'']/versionName "0.46.3"/' \
-            "$GRADLE_FILE" || true
+            's/versionName[[:space:]]*[=:][[:space:]]*["'\''][^"'\'']*["'\'']/versionName "0.46.3"/' \
+            app/build.gradle \
+            app/build.gradle.kts \
+            2>/dev/null || true
 
-          echo "================================================"
-          echo "Renderer version"
-          echo "================================================"
+          grep -R \
+            -n \
+            -E 'versionCode|versionName' \
+            app/build.gradle \
+            app/build.gradle.kts \
+            2>/dev/null || true
 
-          grep -nE \
-            'versionCode|versionName' \
-            "$GRADLE_FILE" || true
-
-      # ============================================================
-      # 24. Build APK
-      # ============================================================
       - name: Build renderer APK
-        working-directory: RendererPlugin-v2
+        working-directory: ${{ env.WORK_ROOT }}/RendererPlugin-v2
         run: |
-          set -eux
-
-          chmod +x gradlew
+          chmod +x ./gradlew
 
           ./gradlew \
             --no-daemon \
             --stacktrace \
             assembleDebug
 
-      # ============================================================
-      # 25. Verify APK
-      # ============================================================
       - name: Verify APK
         run: |
-          set -eux
+          APK_DIR="$WORK_ROOT/RendererPlugin-v2/app/build/outputs/apk/debug"
 
-          APK="$(find \
-            "$WORK_ROOT/RendererPlugin-v2/app/build/outputs/apk/debug" \
-            -maxdepth 1 \
-            -type f \
-            -name '*.apk' \
-            -print \
-            -quit)"
+          if ! compgen -G "$APK_DIR/*.apk" > /dev/null; then
+            echo "APK was not generated"
+            exit 1
+          fi
 
-          test -n "$APK"
-          test -f "$APK"
+          ls -lh "$APK_DIR"/*.apk
 
-          echo "================================================"
-          echo "APK"
-          echo "================================================"
+          sha256sum "$APK_DIR"/*.apk
 
-          ls -lh "$APK"
-          file "$APK"
-
-          echo
-          echo "APK SHA256:"
-          sha256sum "$APK"
-
-      # ============================================================
-      # 26. Upload APK artifact
-      # ============================================================
       - name: Upload renderer APK
         uses: actions/upload-artifact@v4
         with:
           name: MyTurnipZink-APK
           path: RendererPlugin-v2/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-          retention-days: 90
 
-      # ============================================================
-      # 27. Build summary
-      # ============================================================
       - name: Build summary
         if: always()
         run: |
@@ -851,10 +512,10 @@ jobs:
             echo
             echo "- Meson: isolated virtualenv"
             echo "- Mako: isolated virtualenv"
+            echo "- PyYAML: isolated virtualenv"
             echo
             echo "## Result"
             echo
-
             APK_DIR="$WORK_ROOT/RendererPlugin-v2/app/build/outputs/apk/debug"
 
             if compgen -G "$APK_DIR/*.apk" > /dev/null; then
