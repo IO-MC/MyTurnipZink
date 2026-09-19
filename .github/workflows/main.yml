@@ -318,7 +318,7 @@ jobs:
             -Dprecomp-compiler=system \
             -Dspirv-tools=disabled \
             -Dzstd=disabled \
-            -Dzlib=enabled \
+            -Dzlib=disabled \
             -Dshader-cache=disabled \
             -Dbuild-tests=false
 
