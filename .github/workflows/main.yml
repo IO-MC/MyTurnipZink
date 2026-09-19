@@ -240,6 +240,15 @@ jobs:
           echo "ndk.dir=$ANDROID_HOME/ndk/27.3.13750724" > "$M/local.properties"
           cd "$M/.."
 
+          # MobileGL enables glslang optimization, which requires SPIR-V Tools.
+          # The updater must be run from the glslang checkout itself because
+          # it reads known_good.json relative to its current directory.
+          test -f 3rdparty/glslang/update_glslang_sources.py
+          test -f 3rdparty/glslang/known_good.json
+          cd 3rdparty/glslang
+          python3 update_glslang_sources.py
+          cd ../..
+
           set +e
           gradle --no-daemon --stacktrace             -p android-plugin             -Pmobilegl.abis=arm64-v8a             :app:assembleRelease
           GRADLE_STATUS=$?
