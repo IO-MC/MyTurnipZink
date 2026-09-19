@@ -279,13 +279,12 @@ jobs:
           text = path.read_text()
 
           pattern = re.compile(
-              r"dep_zlib = dependency\('zlib', version : '>= 1\.2\.3',\s*"
-              r"allow_fallback: true,\s*"
-              r"required : get_option\('zlib'\)\s*"
-              r"\)\s*"
-              r"if dep_zlib\.found\(\)\s*"
-              r"pre_args \+= '-DHAVE_ZLIB'\s*"
-              r"endif"
+              r"dep_zlib\s*=\s*dependency\(\s*'zlib'.*?"
+              r"required\s*:\s*get_option\('zlib'\)\s*,?\s*\)\s*"
+              r"if\s+dep_zlib\.found\(\)\s*"
+              r"pre_args\s*\+=\s*'-DHAVE_ZLIB'\s*"
+              r"endif",
+              re.DOTALL,
           )
 
           replacement = """if with_platform_android
@@ -574,24 +573,25 @@ jobs:
         run: |
           cd "$WORK_ROOT/RendererPlugin-v2"
 
-          sed -i \
-            's/versionCode[[:space:]]*[=:][[:space:]]*[0-9]*/versionCode 463/' \
-            app/build.gradle \
-            app/build.gradle.kts \
-            2>/dev/null || true
+          # RendererPlugin-v2 uses Gradle Kotlin DSL (build.gradle.kts).
+          # Kotlin property assignments require '='.
+          python3 - <<'PYCODE'
+          from pathlib import Path
 
-          sed -i \
-            's/versionName[[:space:]]*[=:][[:space:]]*["'\''][^"'\'']*["'\'']/versionName "0.46.3"/' \
-            app/build.gradle \
-            app/build.gradle.kts \
-            2>/dev/null || true
+          path = Path("app/build.gradle.kts")
+          text = path.read_text()
 
-          grep -R \
-            -n \
-            -E 'versionCode|versionName' \
-            app/build.gradle \
-            app/build.gradle.kts \
-            2>/dev/null || true
+          if "versionCode = 1" not in text:
+              raise SystemExit("Expected versionCode assignment was not found")
+          if 'versionName = "1.0"' not in text:
+              raise SystemExit("Expected versionName assignment was not found")
+
+          text = text.replace("versionCode = 1", "versionCode = 463", 1)
+          text = text.replace('versionName = "1.0"', 'versionName = "0.46.3"', 1)
+          path.write_text(text)
+          PYCODE
+
+          grep -n -E 'versionCode|versionName' app/build.gradle.kts
 
       - name: Build renderer APK
         working-directory: ${{ env.WORK_ROOT }}/RendererPlugin-v2
