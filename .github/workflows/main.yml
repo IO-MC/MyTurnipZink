@@ -244,6 +244,30 @@ jobs:
         run: |
           rm -f "$MESA_DIR/subprojects/libarchive.wrap"
 
+          # Mesa auto-detects host libelf and then links the host x86_64
+          # libelf into Android targets. Keep libelf disabled for this
+          # Android cross build; Turnip does not require the host libelf.
+          python3 - <<PYCODE
+          from pathlib import Path
+
+          path = Path("$MESA_DIR/meson.build")
+          text = path.read_text()
+
+          old = """dep_elf = dependency('libelf', required : false)
+          if not with_platform_windows and not dep_elf.found()
+            dep_elf = cc.find_library('elf', required : false)
+          endif
+          """
+          new = """dep_elf = null_dep
+          """
+
+          if old not in text:
+            raise SystemExit("Expected Mesa libelf detection block was not found")
+
+          path.write_text(text.replace(old, new, 1))
+          print("Disabled host libelf detection for Android cross build")
+          PYCODE
+
       - name: Create Android cross file
         run: |
           cat > "$WORK_ROOT/android-aarch64.txt" <<EOF
