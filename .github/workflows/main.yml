@@ -332,6 +332,21 @@ jobs:
           s=p.read_text()
           if "versionCode = 1" not in s: raise SystemExit("Expected versionCode assignment was not found")
           if 'versionName = "1.0"' not in s: raise SystemExit("Expected versionName assignment was not found")
+
+          # The pinned RendererPlugin-v2 template defaults MobileGL to DirectGLES.
+          # That routes Minecraft GL calls into the phone's closed Adreno GLES driver.
+          # Our crash report shows SIGSEGV in libGLESv2_adreno.so at glDrawElements.
+          # Force MobileGL to use DirectVulkan so the path is OpenGL -> MobileGL ->
+          # Vulkan -> bundled Mesa Turnip instead of OpenGL -> Adreno GLES.
+          replacements = {
+              'defaultValue = "DirectGLES"': 'defaultValue = "DirectVulkan"',
+              'put("MOBILEGL_BACKEND_TYPE", "DirectGLES")': 'put("MOBILEGL_BACKEND_TYPE", "DirectVulkan")',
+          }
+          for old_value, new_value in replacements.items():
+              if old_value not in s:
+                  raise SystemExit(f"Expected MobileGL backend setting was not found: {old_value}")
+              s = s.replace(old_value, new_value)
+
           p.write_text(s.replace("versionCode = 1","versionCode = 463",1).replace('versionName = "1.0"','versionName = "0.46.3"',1))
           PYCODE
           grep -n -E 'versionCode|versionName' app/build.gradle.kts
