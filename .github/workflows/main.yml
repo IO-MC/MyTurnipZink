@@ -54,6 +54,9 @@ jobs:
             libxml2-dev \
             libarchive-dev \
             ninja-build \
+            cmake \
+            spirv-headers \
+            spirv-tools \
             unzip \
             zip \
             wget \
@@ -157,6 +160,41 @@ jobs:
           git checkout "$MESA_COMMIT"
           git rev-parse HEAD
           git describe --always --tags --dirty || true
+
+      - name: Build SPIR-V LLVM Translator
+        run: |
+          TRANSLATOR_DIR="$WORK_ROOT/SPIRV-LLVM-Translator"
+          TRANSLATOR_BUILD="$WORK_ROOT/spirv-llvm-translator-build"
+          SPIRV_HEADERS_DIR="$WORK_ROOT/SPIRV-Headers"
+
+          rm -rf "$TRANSLATOR_DIR" "$TRANSLATOR_BUILD" "$SPIRV_HEADERS_DIR"
+
+          git clone --depth 1 --branch llvm_release_180 \
+            https://github.com/KhronosGroup/SPIRV-LLVM-Translator.git \
+            "$TRANSLATOR_DIR"
+
+          git clone --depth 1 \
+            https://github.com/KhronosGroup/SPIRV-Headers.git \
+            "$SPIRV_HEADERS_DIR"
+
+          cmake -S "$TRANSLATOR_DIR" -B "$TRANSLATOR_BUILD" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm \
+            -DLLVM_SPIRV_INCLUDE_TESTS=OFF \
+            -DLLVM_SPIRV_BUILD_EXTERNAL=ON \
+            -DLLVM_EXTERNAL_SPIRV_HEADERS_SOURCE_DIR="$SPIRV_HEADERS_DIR"
+
+          cmake --build "$TRANSLATOR_BUILD" --target llvm-spirv -j "$(nproc)"
+          sudo cmake --install "$TRANSLATOR_BUILD"
+
+          echo "/usr/local/lib" | sudo tee /etc/ld.so.conf.d/llvm-spirv.conf >/dev/null
+          sudo ldconfig
+          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+
+          test -x /usr/local/bin/llvm-spirv
+          test -f /usr/local/lib/pkgconfig/LLVMSPIRVLib.pc
+          /usr/local/bin/llvm-spirv --version || true
+          pkg-config --modversion LLVMSPIRVLib
 
       - name: Prepare Mesa native compiler
         run: |
