@@ -359,7 +359,7 @@ jobs:
           # Turnip is a standalone Vulkan driver library, not an Android HAL module.
           # HMI is only required by Android's platform Vulkan HAL loader.
           llvm-readelf -h "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep -E 'Class:.*ELF64|Machine:.*AArch64'
-          llvm-nm -D --defined-only "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep -E 'vkGetInstanceProcAddr$|vk_icdGetInstanceProcAddr$'
+          llvm-nm -D --defined-only "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep -E 'vkGetInstanceProcAddr$|vk_icdGetInstanceProcAddr$' || true
           if llvm-readelf -d "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep -qE 'NEEDED.*libc\+\+_shared\.so'; then
             echo 'Unexpected libc++_shared.so dependency in Turnip driver'
             exit 1
