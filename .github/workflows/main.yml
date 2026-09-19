@@ -245,11 +245,21 @@ jobs:
           cp "$TURNIP_LIB" "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so"
 
           cat > "$DRIVER_ROOT/settings.gradle.kts" <<'EOF'
+          import org.gradle.api.initialization.resolve.RepositoriesMode
+
           pluginManagement {
               repositories {
                   google()
                   mavenCentral()
                   gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
               }
           }
 
@@ -343,28 +353,17 @@ jobs:
           Target: Adreno / KGSL
           EOF
 
-          DRIVER_LIB="$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so"
-          DRIVER_JNI="$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a"
-
           echo "Turnip source library: $TURNIP_LIB"
           echo "Turnip Mesa version: $MESA_DRIVER_VERSION"
-          file "$DRIVER_LIB"
-
+          file "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so"
           # Turnip is a standalone Vulkan driver library, not an Android HAL module.
           # HMI is only required by Android's platform Vulkan HAL loader.
-          llvm-readelf -h "$DRIVER_LIB" | grep -E 'Class:.*ELF64|Machine:.*AArch64'
-
-          # This Mesa Android build has a real libc++ runtime dependency. Package the
-          # NDK runtime beside Turnip so the separate driver APK is self-contained.
-          LIBCXX="$(find "$ANDROID_NDK_HOME" -type f -path '*/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so' | head -n 1 || true)"
-          test -n "$LIBCXX"
-          cp "$LIBCXX" "$DRIVER_JNI/libc++_shared.so"
-
-          llvm-readelf -d "$DRIVER_LIB" | grep 'NEEDED'
-          test -f "$DRIVER_JNI/libc++_shared.so"
-
-          # Symbol export is informational only; some Android-linked Mesa builds hide the ICD entrypoint.
-          llvm-nm -D --defined-only "$DRIVER_LIB" | grep -E 'vk_icdGetInstanceProcAddr$' || true
+          llvm-readelf -h "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep -E 'Class:.*ELF64|Machine:.*AArch64'
+          llvm-nm -D --defined-only "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep -E 'vkGetInstanceProcAddr$|vk_icdGetInstanceProcAddr$'
+          if llvm-readelf -d "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep -qE 'NEEDED.*libc\+\+_shared\.so'; then
+            echo 'Unexpected libc++_shared.so dependency in Turnip driver'
+            exit 1
+          fi
 
           echo "TURNIP_DRIVER_ROOT=$DRIVER_ROOT" >> "$GITHUB_ENV"
 
