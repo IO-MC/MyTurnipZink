@@ -61,7 +61,7 @@ jobs:
           echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platform-tools" "platforms;android-33" "platforms;android-34" \
-            "build-tools;35.0.0" "cmake;3.22.1" "ndk;${ANDROID_NDK_VERSION}"
+            "build-tools;35.0.0" "cmake;3.22.1" "ndk;${ANDROID_NDK_VERSION}" "ndk;27.3.13750724"
 
       - name: Export Android NDK environment
         run: |
@@ -228,22 +228,20 @@ jobs:
           git submodule update --init --recursive
           git rev-parse HEAD
 
+      - name: Setup Gradle for MobileGL
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.10.2
+
       - name: Build MobileGL ARM64 library
         run: |
           M="$MOBILEGL_DIR/android-plugin"
-          G="$WORK_ROOT/RendererPlugin-v2/gradlew"
-          test -x "$G"
-          python3 - <<PYCODE
-          from pathlib import Path
-          p=Path("$M/app/build.gradle.kts")
-          s=p.read_text()
-          old='ndkVersion = "27.3.13750724"'
-          if old not in s: raise SystemExit("Expected MobileGL NDK version declaration was not found")
-          p.write_text(s.replace(old,'ndkVersion = "$ANDROID_NDK_VERSION"',1))
-          PYCODE
-          cd "$M"
-          "$G" --no-daemon --stacktrace -PMOBILEGL_ABIS=arm64-v8a :app:assemblePluginRelease
-          APK="$(find app/build/outputs/apk/plugin/release -type f -name '*.apk' | head -n 1 || true)"
+          test -d "$M"
+          echo "ndk.dir=$ANDROID_HOME/ndk/27.3.13750724" > "$M/local.properties"
+          cd "$M/.."
+          python3 3rdparty/glslang/update_glslang_sources.py
+          gradle --no-daemon --stacktrace -p android-plugin -PMOBILEGL_ABIS=arm64-v8a :app:assembleRelease
+          APK="$(find android-plugin/app/build/outputs/apk -type f -path '*/release/*.apk' | head -n 1 || true)"
           test -n "$APK"
           unzip -l "$APK" | grep -E 'lib/arm64-v8a/libMobileGL\.so$'
           mkdir -p "$WORK_ROOT/mobilegl-extracted"
