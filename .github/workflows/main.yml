@@ -159,7 +159,7 @@ jobs:
         run: |
           rm -rf "$MESA_COMPILER_DIR"
 
-          "$MESON_VENV/bin/meson" setup "$MESA_COMPILER_DIR" \
+          "$MESON_VENV/bin/meson" setup "$MESA_COMPILER_DIR" "$MESA_DIR" \
             --prefix="$MESA_COMPILER_DIR/install" \
             --buildtype=release \
             --strip \
