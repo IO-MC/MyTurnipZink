@@ -69,11 +69,6 @@ jobs:
             wget \
             git
 
-          # --------------------------------------------------------
-          # IMPORTANT:
-          # Use an isolated virtual environment.
-          # --------------------------------------------------------
-
           rm -rf "$MESON_VENV"
 
           python3 -m venv "$MESON_VENV"
@@ -259,8 +254,6 @@ jobs:
 
           cd "$MESA_DIR"
 
-          git fetch --unshallow origin
-
           git checkout "$MESA_COMMIT"
 
           echo "================================================"
@@ -276,7 +269,7 @@ jobs:
           git describe --always --tags --dirty || true
 
       # ============================================================
-      # 9. Prepare native Mesa compiler
+      # 9. Prepare Mesa native compiler
       # ============================================================
       - name: Prepare Mesa native compiler
         run: |
@@ -630,7 +623,7 @@ jobs:
           ls -lah "$LIB_DIR"
 
       # ============================================================
-      # 20. Import IronizedZink shim
+     # 20. Import IronizedZink compatibility shim
       # ============================================================
       - name: Import IronizedZink compatibility shim
         run: |
