@@ -72,10 +72,6 @@ jobs:
           # --------------------------------------------------------
           # IMPORTANT:
           # Use an isolated virtual environment.
-          # This avoids the Ubuntu runner's user-site Python issue
-          # that caused:
-          #
-          # /usr/bin/python3: No module named meson
           # --------------------------------------------------------
 
           rm -rf "$MESON_VENV"
@@ -92,11 +88,8 @@ jobs:
             "meson>=1.4,<2.0" \
             "mako>=1.2"
 
-          # Make the venv the default Python/Meson environment
-          # for every following GitHub Actions step.
           echo "$MESON_VENV/bin" >> "$GITHUB_PATH"
 
-          # Also expose it through environment variables.
           echo "VIRTUAL_ENV=$MESON_VENV" >> "$GITHUB_ENV"
           echo "PATH=$MESON_VENV/bin:$PATH" >> "$GITHUB_ENV"
 
@@ -107,7 +100,7 @@ jobs:
           "$MESON_VENV/bin/python" -m pip --version
 
           echo "=== Meson ==="
-          "$MESON_VENV/bin/python" -m meson --version
+          "$MESON_VENV/bin/meson" --version
 
           echo "=== Mako ==="
           "$MESON_VENV/bin/python" -c \
@@ -217,7 +210,7 @@ jobs:
           which meson
           meson --version
 
-          python -m meson --version
+          "$MESON_VENV/bin/meson" --version
 
           echo "================================================"
           echo "Mako"
@@ -266,8 +259,6 @@ jobs:
 
           cd "$MESA_DIR"
 
-          # Fetch complete history because the Mesa commit is not
-          # guaranteed to be available through a depth=1 ref fetch.
           git fetch --unshallow origin
 
           git checkout "$MESA_COMMIT"
@@ -295,14 +286,7 @@ jobs:
 
           rm -rf "$MESA_COMPILER_DIR"
 
-          # --------------------------------------------------------
-          # Native build:
-          #
-          # This produces mesa_clc on the x86_64 GitHub runner.
-          # The Android build then uses this native compiler.
-          # --------------------------------------------------------
-
-          "$MESON_VENV/bin/python" -m meson setup \
+          "$MESON_VENV/bin/meson" setup \
             "$MESA_COMPILER_DIR" \
             --prefix="$MESA_COMPILER_DIR/install" \
             --buildtype=release \
@@ -315,11 +299,11 @@ jobs:
             -Dllvm=enabled \
             -Dbuild-tests=false
 
-          "$MESON_VENV/bin/python" -m meson compile \
+          "$MESON_VENV/bin/meson" compile \
             -C "$MESA_COMPILER_DIR" \
             -j "$(nproc)"
 
-          "$MESON_VENV/bin/python" -m meson install \
+          "$MESON_VENV/bin/meson" install \
             -C "$MESA_COMPILER_DIR"
 
           echo "================================================"
@@ -364,11 +348,6 @@ jobs:
           set -eux
 
           cd "$MESA_DIR"
-
-          # --------------------------------------------------------
-          # Keep the Android build from using Mesa's libarchive
-          # fallback wrap.
-          # --------------------------------------------------------
 
           rm -f subprojects/libarchive.wrap
 
@@ -460,15 +439,7 @@ jobs:
           meson --version
           mesa_clc --help >/dev/null
 
-          # --------------------------------------------------------
-          # Mesa:
-          #
-          # OpenGL -> Zink -> Vulkan -> Freedreno/Turnip
-          #
-          # Android KGSL backend
-          # --------------------------------------------------------
-
-          "$MESON_VENV/bin/python" -m meson setup \
+          "$MESON_VENV/bin/meson" setup \
             build \
             --cross-file "$WORK_ROOT/android-aarch64.txt" \
             --native-file "$WORK_ROOT/native.txt" \
@@ -509,7 +480,7 @@ jobs:
 
           cd "$MESA_DIR"
 
-          "$MESON_VENV/bin/python" -m meson configure build
+          "$MESON_VENV/bin/meson" configure build
 
       # ============================================================
       # 16. Build Mesa
@@ -522,7 +493,7 @@ jobs:
 
           export PATH="$MESA_COMPILER_DIR/bin:$MESON_VENV/bin:$PATH"
 
-          "$MESON_VENV/bin/python" -m meson compile \
+          "$MESON_VENV/bin/meson" compile \
             -C build \
             -j "$(nproc)"
 
@@ -535,7 +506,7 @@ jobs:
 
           cd "$MESA_DIR"
 
-          "$MESON_VENV/bin/python" -m meson install \
+          "$MESON_VENV/bin/meson" install \
             -C build
 
           echo "================================================"
@@ -621,25 +592,13 @@ jobs:
           rm -rf "$LIB_DIR"
           mkdir -p "$LIB_DIR"
 
-          # --------------------------------------------------------
-          # Turnip / Freedreno Vulkan
-          # --------------------------------------------------------
-
           cp \
             "$MESA_INSTALL_DIR/lib/libvulkan_freedreno.so" \
             "$LIB_DIR/libvulkan_freedreno.so"
 
-          # --------------------------------------------------------
-          # Mesa EGL
-          # --------------------------------------------------------
-
           cp \
             "$MESA_INSTALL_DIR/lib/libEGL_mesa.so" \
             "$LIB_DIR/libEGL_mesa.so"
-
-          # --------------------------------------------------------
-          # Mesa GLES
-          # --------------------------------------------------------
 
           if [ -f "$MESA_INSTALL_DIR/lib/libGLESv2_mesa.so" ]; then
             cp \
@@ -647,23 +606,9 @@ jobs:
               "$LIB_DIR/libGLESv2_mesa.so"
           fi
 
-          # --------------------------------------------------------
-          # Zink Gallium driver
-          #
-          # Mesa installs the Gallium megadriver as:
-          #     libgallium_dri.so
-          #
-          # Renderer packaging expects:
-          #     libzink_dri.so
-          # --------------------------------------------------------
-
           cp \
             "$MESA_INSTALL_DIR/lib/libgallium_dri.so" \
             "$LIB_DIR/libzink_dri.so"
-
-          # --------------------------------------------------------
-          # Optional support libraries
-          # --------------------------------------------------------
 
           for f in \
             libglapi.so \
@@ -714,10 +659,6 @@ jobs:
             \) \
             -print
 
-          # --------------------------------------------------------
-          # libglxshim.so
-          # --------------------------------------------------------
-
           SRC="$(find "$TMP_DIR" \
             -path '*arm64-v8a*' \
             -type f \
@@ -731,10 +672,6 @@ jobs:
             exit 1
           fi
 
-          # --------------------------------------------------------
-          # libcutils.so
-          # --------------------------------------------------------
-
           SRC="$(find "$TMP_DIR" \
             -path '*arm64-v8a*' \
             -type f \
@@ -744,10 +681,6 @@ jobs:
           if [ -n "$SRC" ]; then
             cp "$SRC" "$LIB_DIR/libcutils.so"
           fi
-
-          # --------------------------------------------------------
-          # libironized_zink.so
-          # --------------------------------------------------------
 
           SRC="$(find "$TMP_DIR" \
             -path '*arm64-v8a*' \
@@ -829,7 +762,6 @@ jobs:
 
           test -f "$GRADLE_FILE"
 
-          # Version 0.46.2 -> 0.46.3 for this build iteration.
           sed -i \
             's/versionCode[[:space:]]\+[0-9]\+/versionCode 463/' \
             "$GRADLE_FILE" || true
