@@ -426,6 +426,22 @@ jobs:
             -type f \
             -exec file {} \;
 
+      - name: Clone RendererPlugin-v2
+        run: |
+          RENDERER_DIR="$WORK_ROOT/RendererPlugin-v2"
+
+          rm -rf "$RENDERER_DIR"
+
+          git clone --depth 1 \
+            https://github.com/ZalithLauncher/RendererPlugin-v2.git \
+            "$RENDERER_DIR"
+
+          cd "$RENDERER_DIR"
+          git checkout 1591ff84c3ddda0c95ae1e72ef1f6608cb331b7d
+          git rev-parse HEAD
+          test -f gradlew
+          test -f app/build.gradle.kts
+
       - name: Prepare renderer plugin libraries
         run: |
           JNI_DIR="$WORK_ROOT/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
