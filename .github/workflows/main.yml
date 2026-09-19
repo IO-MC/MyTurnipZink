@@ -234,12 +234,43 @@ jobs:
           gradle-version: 8.10.2
 
       - name: Build MobileGL ARM64 library
+        id: build-mobilegl
         run: |
+          set -o pipefail
           M="$MOBILEGL_DIR/android-plugin"
+          LOG="$WORK_ROOT/mobilegl-build.log"
+          DEBUG="$WORK_ROOT/mobilegl-debug-summary.txt"
           test -d "$M"
           echo "ndk.dir=$ANDROID_HOME/ndk/27.3.13750724" > "$M/local.properties"
           cd "$M/.."
-          gradle --no-daemon --stacktrace -p android-plugin -Pmobilegl.abis=arm64-v8a :app:assembleRelease
+
+          {
+            echo "=== MobileGL build diagnostics ==="
+            date -u
+            echo "Commit: $(git rev-parse HEAD)"
+            echo "Java:"
+            java -version 2>&1
+            echo "Gradle:"
+            gradle --version 2>&1 | sed -n '1,14p'
+            echo "NDK: $ANDROID_HOME/ndk/27.3.13750724"
+            echo "ABI: arm64-v8a"
+            echo
+            echo "=== Gradle build ==="
+          } > "$DEBUG"
+
+          gradle --no-daemon --stacktrace -p android-plugin -Pmobilegl.abis=arm64-v8a :app:assembleRelease 2>&1 | tee "$LOG" | tee -a "$DEBUG"
+          GRADLE_STATUS=${PIPESTATUS[0]}
+
+          echo "" >> "$DEBUG"
+          echo "=== Last 120 log lines ===" >> "$DEBUG"
+          tail -n 120 "$LOG" >> "$DEBUG" || true
+
+          if [ "$GRADLE_STATUS" -ne 0 ]; then
+            echo "Gradle exit code: $GRADLE_STATUS" >> "$DEBUG"
+            echo "---- MobileGL build failed; diagnostic artifact will be uploaded. ----"
+            exit "$GRADLE_STATUS"
+          fi
+
           APK="$(find android-plugin/app/build/outputs/apk -type f -path '*/release/*.apk' | head -n 1 || true)"
           test -n "$APK"
           unzip -l "$APK" | grep -E 'lib/arm64-v8a/libMobileGL\.so$'
@@ -247,6 +278,33 @@ jobs:
           unzip -j "$APK" 'lib/arm64-v8a/libMobileGL.so' -d "$WORK_ROOT/mobilegl-extracted"
           test -f "$WORK_ROOT/mobilegl-extracted/libMobileGL.so"
           file "$WORK_ROOT/mobilegl-extracted/libMobileGL.so"
+
+      - name: Publish MobileGL diagnostics
+        if: always()
+        run: |
+          DEBUG="$WORK_ROOT/mobilegl-debug-summary.txt"
+          LOG="$WORK_ROOT/mobilegl-build.log"
+          {
+            echo "## MobileGL diagnostics"
+            echo
+            if [ -f "$DEBUG" ]; then
+              echo '```text'
+              tail -n 180 "$DEBUG"
+              echo '```'
+            else
+              echo "No MobileGL diagnostic file was produced."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload MobileGL diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MobileGL-Diagnostics
+          path: |
+            mobilegl-build.log
+            mobilegl-debug-summary.txt
+          if-no-files-found: warn
 
       - name: Clone RendererPlugin-v2
         run: |
