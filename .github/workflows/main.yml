@@ -10,15 +10,16 @@ permissions:
 
 env:
   MESA_COMMIT: 8d68f369fc1
-  MOBILEGL_COMMIT: fff9d639f06cad2aedb5ac0b93c523d7ca153fdc
-  ANDROID_API: 30
-  ANDROID_NDK_VERSION: 30.0.14904198
+  ANDROID_API: 33
+  ANDROID_NDK_VERSION: 28.2.13676358
+  TURNIP_ANDROID_API: 30
+  TURNIP_NDK_VERSION: 30.0.14904198
   WORK_ROOT: ${{ github.workspace }}
   MESA_DIR: ${{ github.workspace }}/mesa
   MESA_COMPILER_DIR: ${{ github.workspace }}/mesa-compiler
   MESA_INSTALL_DIR: ${{ github.workspace }}/install
+  TURNIP_INSTALL_DIR: ${{ github.workspace }}/turnip-install
   MESON_VENV: ${{ github.workspace }}/meson-venv
-  MOBILEGL_DIR: ${{ github.workspace }}/MobileGL
 
 jobs:
   build:
@@ -61,14 +62,16 @@ jobs:
           echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platform-tools" "platforms;android-33" "platforms;android-34" \
-            "build-tools;35.0.0" "cmake;3.22.1" "ndk;${ANDROID_NDK_VERSION}" "ndk;27.3.13750724"
+            "build-tools;35.0.0" "cmake;3.22.1" "ndk;${ANDROID_NDK_VERSION}" "ndk;${TURNIP_NDK_VERSION}" "ndk;27.3.13750724"
 
       - name: Export Android NDK environment
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
           export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
+          export TURNIP_NDK_HOME="$ANDROID_HOME/ndk/$TURNIP_NDK_VERSION"
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT" >> "$GITHUB_ENV"
+          echo "TURNIP_NDK_HOME=$TURNIP_NDK_HOME" >> "$GITHUB_ENV"
           echo "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
 
       - name: Verify toolchain
@@ -164,7 +167,7 @@ jobs:
           cat > "$WORK_ROOT/android-aarch64.txt" <<EOF
           [binaries]
           c = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang'
-          cpp = ['$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '--start-no-unused-arguments', '-static-libstdc++', '--end-no-unused-arguments']
+          cpp = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang++'
           ar = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
           strip = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
           ranlib = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib'
@@ -194,6 +197,23 @@ jobs:
           cpu = 'x86_64'
           endian = 'little'
           EOF
+          cat > "$WORK_ROOT/android-turnip-aarch64.txt" <<EOF
+          [binaries]
+          c = '$TURNIP_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${TURNIP_ANDROID_API}-clang'
+          cpp = ['$TURNIP_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${TURNIP_ANDROID_API}-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '--start-no-unused-arguments', '-static-libstdc++', '--end-no-unused-arguments']
+          ar = '$TURNIP_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
+          strip = '$TURNIP_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
+          ranlib = '$TURNIP_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib'
+          ld = '$TURNIP_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld'
+          pkg-config = '/usr/bin/pkg-config'
+          [properties]
+          needs_exe_wrapper = true
+          [host_machine]
+          system = 'android'
+          cpu_family = 'aarch64'
+          cpu = 'armv8-a'
+          endian = 'little'
+          EOF
 
       - name: Configure Mesa
         working-directory: ${{ env.MESA_DIR }}
@@ -205,6 +225,30 @@ jobs:
             --prefix "$MESA_INSTALL_DIR" \
             -Dbuildtype=release -Dstrip=true -Dplatforms=android \
             -Dplatform-sdk-version="$ANDROID_API" -Dandroid-stub=true \
+            -Dandroid-libbacktrace=disabled -Degl=enabled -Dgles2=enabled -Dgles1=disabled \
+            -Dglx=disabled -Degl-lib-suffix=_mesa -Dgles-lib-suffix=_mesa \
+            -Dshared-glapi=enabled -Dgallium-drivers=zink -Dvulkan-drivers=freedreno \
+            -Dfreedreno-kmds=kgsl -Dvulkan-beta=true -Dllvm=disabled -Ddraw-use-llvm=false \
+            -Dmesa-clc=system -Dprecomp-compiler=system -Dspirv-tools=disabled \
+            -Dzstd=disabled -Dzlib=enabled -Dshader-cache=disabled -Dbuild-tests=false
+
+      - name: Build and install Mesa
+        working-directory: ${{ env.MESA_DIR }}
+        run: |
+          "$MESON_VENV/bin/meson" compile -C build -j "$(nproc)"
+          "$MESON_VENV/bin/meson" install -C build
+          find "$MESA_INSTALL_DIR" \( -name "libvulkan_freedreno.so" -o -name "libgallium_dri.so" -o -name "libEGL_mesa.so" -o -name "libGLESv2_mesa.so" \) -type f -exec file {} \;
+
+      - name: Configure standalone Turnip Mesa
+        working-directory: ${{ env.MESA_DIR }}
+        run: |
+          rm -rf turnip-build "$TURNIP_INSTALL_DIR"
+          "$MESON_VENV/bin/meson" setup turnip-build \
+            --cross-file "$WORK_ROOT/android-turnip-aarch64.txt" \
+            --native-file "$WORK_ROOT/native.txt" \
+            --prefix "$TURNIP_INSTALL_DIR" \
+            -Dbuildtype=release -Dstrip=true -Dplatforms=android \
+            -Dplatform-sdk-version="$TURNIP_ANDROID_API" -Dandroid-stub=true \
             -Dandroid-libbacktrace=disabled -Degl=disabled -Dgles2=disabled -Dgles1=disabled \
             -Dglx=disabled -Dgbm=disabled \
             -Dgallium-drivers= -Dvulkan-drivers=freedreno \
@@ -214,232 +258,12 @@ jobs:
             -Dshader-cache=disabled -Dbuild-tests=false -Db_lto=false -Dcpp_rtti=false \
             -Dcpp_link_args="-static-libstdc++"
 
-      - name: Build and install Mesa
+      - name: Build and install standalone Turnip Mesa
         working-directory: ${{ env.MESA_DIR }}
         run: |
-          "$MESON_VENV/bin/meson" compile -C build -j "$(nproc)"
-          "$MESON_VENV/bin/meson" install -C build
-          find "$MESA_INSTALL_DIR" \( -name "libvulkan_freedreno.so" -o -name "libgallium_dri.so" -o -name "libEGL_mesa.so" -o -name "libGLESv2_mesa.so" \) -type f -exec file {} \;
-
-      - name: Setup Gradle for MobileGL
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: 8.10.2
-
-      - name: Prepare separate Turnip driver plugin
-        run: |
-          TURNIP_LIB="$(find "$MESA_INSTALL_DIR" -type f -name 'libvulkan_freedreno.so' | head -n 1 || true)"
-          test -n "$TURNIP_LIB"
-          test -f "$TURNIP_LIB"
-
-          # Keep the driver as a standalone Zalith/FCL driver plugin. The renderer
-          # APK is no longer the canonical place for Turnip; Zalith exposes the
-          # selected driver's nativeLibraryDir as DRIVER_PATH.
-          MESA_DRIVER_VERSION="$(strings "$TURNIP_LIB" | grep -oE 'Mesa [0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._+-]+)?' | head -n 1 | sed 's/^Mesa //' || true)"
-          if [ -z "$MESA_DRIVER_VERSION" ]; then
-            MESA_DRIVER_VERSION="26.3.0-devel"
-          fi
-          echo "MESA_DRIVER_VERSION=$MESA_DRIVER_VERSION" >> "$GITHUB_ENV"
-
-          DRIVER_ROOT="$WORK_ROOT/TurnipDriverPlugin"
-          rm -rf "$DRIVER_ROOT"
-          mkdir -p "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a" "$DRIVER_ROOT/app/src/main/assets"
-          cp "$TURNIP_LIB" "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so"
-
-          cat > "$DRIVER_ROOT/settings.gradle.kts" <<'EOF'
-          import org.gradle.api.initialization.resolve.RepositoriesMode
-
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-
-          rootProject.name = "TurnipDriverPlugin"
-          include(":app")
-          EOF
-
-          cat > "$DRIVER_ROOT/build.gradle.kts" <<'EOF'
-          plugins {
-              id("com.android.application") version "8.6.1" apply false
-          }
-          EOF
-
-          cat > "$DRIVER_ROOT/app/build.gradle.kts" <<'EOF'
-          plugins {
-              id("com.android.application")
-          }
-
-          val mesaDriverVersion = System.getenv("MESA_DRIVER_VERSION") ?: "unknown"
-
-          android {
-              namespace = "org.myturnipzink.driver.turnip"
-              compileSdk = 34
-
-              defaultConfig {
-                  applicationId = "org.myturnipzink.driver.turnip"
-                  minSdk = 26
-                  targetSdk = 34
-                  versionCode = 26300
-                  versionName = "Mesa $mesaDriverVersion"
-
-                  ndk {
-                      abiFilters += "arm64-v8a"
-                  }
-              }
-
-              packaging {
-                  jniLibs {
-                      useLegacyPackaging = true
-                      keepDebugSymbols += "**/libvulkan_freedreno.so"
-                  }
-              }
-
-              buildTypes {
-                  debug {
-                      isMinifyEnabled = false
-                  }
-                  release {
-                      isMinifyEnabled = false
-                  }
-              }
-          }
-          EOF
-
-          cat > "$DRIVER_ROOT/app/src/main/AndroidManifest.xml" <<EOF
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <application
-                  android:label="Turnip Driver (Mesa $MESA_DRIVER_VERSION)"
-                  android:hasCode="false"
-                  android:extractNativeLibs="true"
-                  android:allowBackup="false">
-
-                  <meta-data
-                      android:name="fclPlugin"
-                      android:value="true" />
-
-                  <meta-data
-                      android:name="driver"
-                      android:value="Turnip (Mesa $MESA_DRIVER_VERSION)" />
-
-                  <activity
-                      android:name="android.app.Activity"
-                      android:label="Turnip Driver (Mesa $MESA_DRIVER_VERSION)"
-                      android:exported="true">
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LAUNCHER" />
-                      </intent-filter>
-                  </activity>
-              </application>
-          </manifest>
-          EOF
-
-          cat > "$DRIVER_ROOT/app/src/main/assets/BUILD-INFO.txt" <<EOF
-          MyTurnipZink Turnip Driver
-          Mesa: $MESA_DRIVER_VERSION
-          Mesa commit: $MESA_COMMIT
-          Architecture: arm64-v8a
-          Vulkan driver: libvulkan_freedreno.so
-          Target: Adreno / KGSL
-          EOF
-
-          echo "Turnip source library: $TURNIP_LIB"
-          echo "Turnip Mesa version: $MESA_DRIVER_VERSION"
-          file "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so"
-          # Turnip is a standalone Vulkan driver library, not an Android HAL module.
-          # HMI is only required by Android's platform Vulkan HAL loader.
-          llvm-readelf -h "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep -E 'Class:.*ELF64|Machine:.*AArch64'
-          # The working Zalith Turnip 26.1.6 reference exports HMI and has no
-          # libc++_shared.so dependency. Validate the same Android Turnip shape.
-          llvm-nm -D --defined-only "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep -E '\bHMI$'
-
-          echo "Turnip dynamic dependencies:"
-          llvm-readelf -d "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep 'NEEDED' || true
-          if llvm-readelf -d "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep -q 'libc++_shared\.so'; then
-            echo "ERROR: Turnip still depends on libc++_shared.so; static libc++ build did not take effect."
-            exit 1
-          fi
-          echo "Verified: no libc++_shared.so dependency in Turnip."
-
-          echo "TURNIP_DRIVER_ROOT=$DRIVER_ROOT" >> "$GITHUB_ENV"
-
-      - name: Build Turnip driver APK
-        run: |
-          cd "$TURNIP_DRIVER_ROOT"
-          gradle --no-daemon --stacktrace :app:assembleDebug
-
-          APK="$TURNIP_DRIVER_ROOT/app/build/outputs/apk/debug/app-debug.apk"
-          test -f "$APK"
-          ls -lh "$APK"
-          sha256sum "$APK"
-          unzip -l "$APK" | grep -E 'lib/arm64-v8a/libvulkan_freedreno\.so$'
-          unzip -l "$APK" | grep -E 'assets/BUILD-INFO\.txt$'
-
-          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
-          test -x "$AAPT"
-          "$AAPT" dump xmltree "$APK" AndroidManifest.xml | grep -A2 -B2 -E 'fclPlugin|driver'
-
-      - name: Upload Turnip driver APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: MyTurnipZink-Turnip-Driver-APK
-          path: TurnipDriverPlugin/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-
-      - name: Clone MobileGL
-        run: |
-          rm -rf "$MOBILEGL_DIR"
-          git clone --recurse-submodules https://github.com/MobileGL-Dev/MobileGL.git "$MOBILEGL_DIR"
-          cd "$MOBILEGL_DIR"
-          git checkout "$MOBILEGL_COMMIT"
-          git submodule update --init --recursive
-          git rev-parse HEAD
-
-      - name: Build MobileGL ARM64 library
-        run: |
-          M="$MOBILEGL_DIR/android-plugin"
-          test -d "$M"
-          echo "ndk.dir=$ANDROID_HOME/ndk/27.3.13750724" > "$M/local.properties"
-          cd "$M/.."
-
-          # MobileGL enables glslang optimization, which requires SPIR-V Tools.
-          # The updater must be run from the glslang checkout itself because
-          # it reads known_good.json relative to its current directory.
-          test -f 3rdparty/glslang/update_glslang_sources.py
-          test -f 3rdparty/glslang/known_good.json
-          cd 3rdparty/glslang
-          python3 update_glslang_sources.py
-          cd ../..
-
-          set +e
-          gradle --no-daemon --stacktrace             -p android-plugin             -Pmobilegl.abis=arm64-v8a             :app:assembleRelease
-          GRADLE_STATUS=$?
-          set -e
-
-          if [ "$GRADLE_STATUS" -ne 0 ]; then
-            echo "MobileGL Gradle build failed with exit code $GRADLE_STATUS"
-            exit "$GRADLE_STATUS"
-          fi
-
-          APK="$(find android-plugin/app/build/outputs/apk -type f -path '*/release/*.apk' | head -n 1 || true)"
-          test -n "$APK"
-          unzip -l "$APK" | grep -E 'lib/arm64-v8a/libMobileGL\.so$'
-          mkdir -p "$WORK_ROOT/mobilegl-extracted"
-          unzip -j "$APK" 'lib/arm64-v8a/libMobileGL.so' -d "$WORK_ROOT/mobilegl-extracted"
-          test -f "$WORK_ROOT/mobilegl-extracted/libMobileGL.so"
-          file "$WORK_ROOT/mobilegl-extracted/libMobileGL.so"
+          "$MESON_VENV/bin/meson" compile -C turnip-build -j "$(nproc)"
+          "$MESON_VENV/bin/meson" install -C turnip-build
+          find "$TURNIP_INSTALL_DIR" -name "libvulkan_freedreno.so" -type f -exec file {} \\;
 
       - name: Clone RendererPlugin-v2
         run: |
@@ -457,29 +281,31 @@ jobs:
           J="$WORK_ROOT/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
           rm -rf "$J"
           mkdir -p "$J"
-          cp "$WORK_ROOT/mobilegl-extracted/libMobileGL.so" "$J/libMobileGL.so"
-          # Turnip is shipped separately as a Zalith/FCL driver plugin.
-          # Keeping it out of the renderer APK prevents two independent driver
-          # copies from being mistaken for the selected Vulkan driver.
-          find "$MESA_INSTALL_DIR" -name "libEGL_mesa.so" -type f -exec cp {} "$J/libEGL_mesa.so" \; -quit
-          find "$MESA_INSTALL_DIR" -name "libGLESv2_mesa.so" -type f -exec cp {} "$J/libGLESv2_mesa.so" \; -quit || true
-          find "$MESA_INSTALL_DIR" -name "libgallium_dri.so" -type f -exec cp {} "$J/libzink_dri.so" \; -quit
-          for lib in libglapi.so libexpat.so libxml2.so libarchive.so; do
-            F="$(find "$MESA_INSTALL_DIR" -name "$lib" -type f | head -n 1 || true)"
-            [ -z "$F" ] || cp "$F" "$J/$lib"
-          done
 
-      - name: Import IronizedZink compatibility shim
-        run: |
+          # Renderer APK = Mesa Zink/Kopper only. Turnip is packaged separately.
+          EGL_LIB="$(find "$MESA_INSTALL_DIR" -type f -name 'libEGL_mesa.so' | head -n 1 || true)"
+          ZINK_LIB="$(find "$MESA_INSTALL_DIR" -type f -name 'libgallium_dri.so' | head -n 1 || true)"
+          GLAPI_LIB="$(find "$MESA_INSTALL_DIR" -type f -name 'libglapi.so' | head -n 1 || true)"
+          test -n "$EGL_LIB"
+          test -n "$ZINK_LIB"
+          test -n "$GLAPI_LIB"
+          cp "$EGL_LIB" "$J/libEGL_mesa.so"
+          cp "$ZINK_LIB" "$J/libzink_dri.so"
+          cp "$GLAPI_LIB" "$J/libglapi.so"
+
+          # Use the same OpenGL entry shim as the working Kopper Zink/Ironized Zink
+          # plugins. It is a GLX-to-EGL bridge; Mesa/Zink remains the actual renderer.
           I="$WORK_ROOT/IronizedZink"
-          J="$WORK_ROOT/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
           rm -rf "$I"
           git clone --depth 1 https://github.com/GoyDevv/IronizedZink.git "$I"
-          X="$(find "$I" -type f -name libglxshim.so | head -n 1 || true)"
-          test -n "$X"
-          cp "$X" "$J/libglxshim.so"
-          for lib in libcutils.so libironized_zink.so; do
-            F="$(find "$I" -type f -name "$lib" | head -n 1 || true)"
+          GLXSHIM="$(find "$I" -type f -name 'libglxshim.so' | head -n 1 || true)"
+          test -n "$GLXSHIM"
+          cp "$GLXSHIM" "$J/libglxshim.so"
+
+          # Preserve the Mesa-side Android helper/runtime dependencies used by the
+          # previous successful renderer packaging.
+          for lib in libcutils.so libhardware.so libexpat.so libxml2.so libarchive.so; do
+            F="$(find "$MESA_INSTALL_DIR" -type f -name "$lib" | head -n 1 || true)"
             [ -z "$F" ] || cp "$F" "$J/$lib"
           done
 
@@ -493,39 +319,82 @@ jobs:
       - name: Verify renderer libraries
         run: |
           J="$WORK_ROOT/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
-          for lib in libMobileGL.so libEGL_mesa.so libzink_dri.so libc++_shared.so libglxshim.so; do
+          for lib in libEGL_mesa.so libzink_dri.so libglapi.so libglxshim.so libcutils.so libhardware.so libc++_shared.so; do
             test -f "$J/$lib" || { echo "Missing required library: $lib"; exit 1; }
             file "$J/$lib"
           done
+          echo "Renderer native dependencies:"
+          for lib in libglxshim.so libEGL_mesa.so libzink_dri.so; do
+            echo "--- $lib ---"
+            llvm-readelf -d "$J/$lib" | grep 'NEEDED' || true
+          done
           ls -lh "$J"
 
-      - name: Set renderer version
+      - name: Configure renderer as Zink/Kopper
         run: |
           cd "$WORK_ROOT/RendererPlugin-v2"
           python3 - <<'PYCODE'
           from pathlib import Path
           p=Path("app/build.gradle.kts")
           s=p.read_text()
-          if "versionCode = 1" not in s: raise SystemExit("Expected versionCode assignment was not found")
-          if 'versionName = "1.0"' not in s: raise SystemExit("Expected versionName assignment was not found")
+          if "versionCode = 1" not in s:
+              raise SystemExit("Expected versionCode assignment was not found")
+          if 'versionName = "1.0"' not in s:
+              raise SystemExit("Expected versionName assignment was not found")
 
-          # The pinned RendererPlugin-v2 template defaults MobileGL to DirectGLES.
-          # That routes Minecraft GL calls into the phone's closed Adreno GLES driver.
-          # Our crash report shows SIGSEGV in libGLESv2_adreno.so at glDrawElements.
-          # Force MobileGL to use DirectVulkan so the path is OpenGL -> MobileGL ->
-          # Vulkan -> bundled Mesa Turnip instead of OpenGL -> Adreno GLES.
-          replacements = {
-              'defaultValue = "DirectGLES"': 'defaultValue = "DirectVulkan"',
-              'put("MOBILEGL_BACKEND_TYPE", "DirectGLES")': 'put("MOBILEGL_BACKEND_TYPE", "DirectVulkan")',
-          }
-          for old_value, new_value in replacements.items():
-              if old_value not in s:
-                  raise SystemExit(f"Expected MobileGL backend setting was not found: {old_value}")
-              s = s.replace(old_value, new_value)
+          # RendererPlugin-v2 must describe the Mesa/Zink stack, not MobileGL.
+          old_v2_start=s.index('            resValue("string", "config", buildJsonValue {')
+          old_v2_end=s.index('            })', old_v2_start)+len('            })')
+          new_v2='\n'.join([
+              '            resValue("string", "config", buildJsonValue {',
+              '                renderer(',
+              '                    displayName = "MyTurnipZink | Mesa Zink 26.3.0",',
+              '                    rendererId = "opengles3_desktopgl_zink_kopper",',
+              '                    rendererGLPath = "libglxshim.so",',
+              '                    rendererEGLPath = "libEGL_mesa.so",',
+              '                    dlopenLibPaths = emptyList(),',
+              '                    env = buildEnvs {',
+              '                        normal("LIBGL_ES", "3")',
+              '                    },',
+              '                    minMCVer = null,',
+              '                    maxMCVer = null,',
+              '                )',
+              '            })',
+          ])
+          s=s[:old_v2_start]+new_v2+s[old_v2_end:]
 
-          p.write_text(s.replace("versionCode = 1","versionCode = 463",1).replace('versionName = "1.0"','versionName = "0.46.3"',1))
+          # Legacy renderer-plugin metadata is kept consistent as a fallback.
+          old_legacy_start=s.index('            manifestPlaceholders.putAll(legacyManifest {')
+          old_legacy_end=s.index('            })', old_legacy_start)+len('            })')
+          new_legacy='\n'.join([
+              '            manifestPlaceholders.putAll(legacyManifest {',
+              '                displayName     = "MyTurnipZink | Mesa Zink 26.3.0"',
+              '                rendererName    = "MyTurnipZink | Mesa Zink 26.3.0"',
+              '                rendererLib     = "libglxshim.so"',
+              '                eglLib          = "libEGL_mesa.so"',
+              '                minMCVer        = ""',
+              '                maxMCVer        = ""',
+              '                boatEnv {',
+              '                    put("LIBGL_ES", "3")',
+              '                    put("POJAV_RENDERER", "opengles3_desktopgl_zink_kopper")',
+              '                    put("MESA_LOADER_DRIVER_OVERRIDE", "zink")',
+              '                }',
+              '                pojavEnv {',
+              '                    put("LIBGL_ES", "3")',
+              '                    put("POJAV_RENDERER", "opengles3_desktopgl_zink_kopper")',
+              '                    put("MESA_LOADER_DRIVER_OVERRIDE", "zink")',
+              '                }',
+              '            })',
+          ])
+          s=s[:old_legacy_start]+new_legacy+s[old_legacy_end:]
+
+          # App label/version.
+          s=s.replace('resValue("string","app_name","XXX Renderer")','resValue("string","app_name","MyTurnipZink")',1)
+          s=s.replace('versionCode = 1','versionCode = 463',1)
+          s=s.replace('versionName = "1.0"','versionName = "0.46.3-zink"',1)
+          p.write_text(s)
           PYCODE
-          grep -n -E 'versionCode|versionName' app/build.gradle.kts
+          grep -n -E 'app_name|displayName|rendererId|rendererGLPath|rendererEGLPath|POJAV_RENDERER|MESA_LOADER_DRIVER_OVERRIDE|versionCode|versionName' app/build.gradle.kts
 
       - name: Build renderer APK
         working-directory: ${{ env.WORK_ROOT }}/RendererPlugin-v2
@@ -537,9 +406,21 @@ jobs:
         run: |
           D="$WORK_ROOT/RendererPlugin-v2/app/build/outputs/apk/debug"
           compgen -G "$D/*.apk" >/dev/null || { echo "APK was not generated"; exit 1; }
-          ls -lh "$D"/*.apk
-          sha256sum "$D"/*.apk
-          unzip -l "$D"/*.apk | grep 'lib/arm64-v8a/' | sort
+          APK="$(find "$D" -maxdepth 1 -name '*.apk' | head -n 1)"
+          ls -lh "$APK"
+          sha256sum "$APK"
+          echo "Native libraries in renderer APK:"
+          unzip -l "$APK" | grep 'lib/arm64-v8a/' | sort
+          for lib in libEGL_mesa.so libzink_dri.so libglxshim.so libc++_shared.so; do
+            unzip -l "$APK" | grep -q "lib/arm64-v8a/$lib$" || { echo "Missing $lib from APK"; exit 1; }
+          done
+          if unzip -l "$APK" | grep -q 'lib/arm64-v8a/libMobileGL\.so$'; then
+            echo "ERROR: MobileGL must not be packaged in the Zink renderer APK."
+            exit 1
+          fi
+          echo "Renderer APK contains the intended Mesa/Zink entry libraries and no MobileGL."
+          echo "Embedded renderer config strings (when exposed by aapt):"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump resources "$APK" | grep -E 'opengles3_desktopgl_zink_kopper|libglxshim.so|libEGL_mesa.so|LIBGL_ES' | head -n 50 || true
 
       - name: Upload renderer APK
         uses: actions/upload-artifact@v4
@@ -555,13 +436,14 @@ jobs:
             echo "# MyTurnipZink 0.46.3"
             echo
             echo "- Mesa commit: \`$MESA_COMMIT\`"
-            echo "- MobileGL commit: \`$MOBILEGL_COMMIT\`"
-            echo "- Turnip Android API: $ANDROID_API"
-            echo "- Turnip Android NDK: $ANDROID_NDK_VERSION"
+            echo "- Renderer Android API: $ANDROID_API"
+            echo "- Renderer Android NDK: $ANDROID_NDK_VERSION"
+            echo "- Turnip Android API: $TURNIP_ANDROID_API"
+            echo "- Turnip Android NDK: $TURNIP_NDK_VERSION"
             echo "- Architecture: arm64-v8a"
-            echo "- Vulkan renderer backend: MobileGL DirectVulkan"
+            echo "- Vulkan renderer backend: Zink/Kopper over separate Turnip"
             echo "- Separate Vulkan driver APK: Turnip (Mesa $MESA_DRIVER_VERSION)"
-            echo "- OpenGL: MobileGL -> DirectVulkan"
+            echo "- OpenGL: Mesa Zink/Kopper 26.3.0 -> Turnip 26.3.0"
             echo "- Target GPU: Adreno 618"
             echo
             echo "APK is generated only when all required native libraries are present."
