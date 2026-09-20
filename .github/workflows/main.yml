@@ -289,28 +289,61 @@ jobs:
           # Renderer APK = Mesa Zink/Kopper only. Turnip is packaged separately.
           EGL_LIB="$(find "$MESA_INSTALL_DIR" -type f -name 'libEGL_mesa.so' | head -n 1 || true)"
           GALLIUM_LIB="$(find "$MESA_INSTALL_DIR" -type f -name 'libgallium_dri.so' | head -n 1 || true)"
-          GLAPI_LIB="$(find "$MESA_INSTALL_DIR" -type f \( -name 'libglapi.so' -o -name 'libglapi.so.*' \) | sort | head -n 1 || true)"
-          test -n "$EGL_LIB"
-          test -n "$GALLIUM_LIB"
-          test -n "$GLAPI_LIB"
-          echo "Found Mesa GLAPI library: $GLAPI_LIB"
-          find "$MESA_INSTALL_DIR" -type f -name 'libglapi.so*' -print
+          test -n "$EGL_LIB" || { echo "Missing libEGL_mesa.so under $MESA_INSTALL_DIR"; exit 1; }
+          test -n "$GALLIUM_LIB" || { echo "Missing libgallium_dri.so under $MESA_INSTALL_DIR"; exit 1; }
+
           cp "$EGL_LIB" "$J/libEGL_mesa.so"
           cp "$GALLIUM_LIB" "$J/libgallium_dri.so"
-          # Mesa may install GLAPI with an ABI suffix (for example libglapi.so.0).
-          # Keep a canonical libglapi.so copy for explicit preloading and also
-          # copy the SONAME filename when it is versioned.
-          cp "$GLAPI_LIB" "$J/libglapi.so"
-          GLAPI_SONAME="$(llvm-readelf -d "$GLAPI_LIB" 2>/dev/null | sed -n 's/.*SONAME.*\[\([^]]*\)\].*/\1/p' | head -n 1 || true)"
-          if [ -n "$GLAPI_SONAME" ] && [ "$GLAPI_SONAME" != "libglapi.so" ]; then
-            cp "$GLAPI_LIB" "$J/$GLAPI_SONAME"
+
+          # Mesa 26.2.3 no longer installs a separate shared libglapi on this
+          # Android configuration. Build a small compatibility shared object
+          # from the GLAPI static archive so the Mesa EGL entry library can be
+          # preloaded explicitly before libEGL_mesa.so is opened.
+          GLAPI_SHARED="$(find "$MESA_INSTALL_DIR" -type f \( -name 'libglapi.so' -o -name 'libglapi.so.*' \) | sort | head -n 1 || true)"
+          if [ -n "$GLAPI_SHARED" ]; then
+            echo "Found Mesa shared GLAPI: $GLAPI_SHARED"
+            cp "$GLAPI_SHARED" "$J/libglapi.so"
+          else
+            GLAPI_ARCHIVE="$(find "$MESA_DIR/build" "$MESA_INSTALL_DIR" -type f -name 'libglapi.a' 2>/dev/null | sort | head -n 1 || true)"
+            test -n "$GLAPI_ARCHIVE" || {
+              echo "ERROR: Mesa shared libglapi.so is absent and libglapi.a could not be found."
+              echo "GLAPI files seen in Mesa build/install tree:"
+              find "$MESA_DIR/build" "$MESA_INSTALL_DIR" -type f -name 'libglapi*' -print 2>/dev/null || true
+              exit 1
+            }
+
+            echo "Mesa shared libglapi.so is absent (expected for this Mesa 26.2.3 Android build)."
+            echo "Using static GLAPI archive: $GLAPI_ARCHIVE"
+            API_CLANG="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang"
+            GLAPI_OUT="$WORK_ROOT/libglapi.so"
+
+            "$API_CLANG" -shared -fuse-ld=lld \
+              -Wl,-soname,libglapi.so \
+              -Wl,--whole-archive "$GLAPI_ARCHIVE" -Wl,--no-whole-archive \
+              -o "$GLAPI_OUT"
+
+            test -f "$GLAPI_OUT"
+            cp "$GLAPI_OUT" "$J/libglapi.so"
           fi
+
+          echo "Renderer Mesa libraries:"
+          ls -lh "$J/libEGL_mesa.so" "$J/libgallium_dri.so" "$J/libglapi.so"
+          file "$J/libEGL_mesa.so" "$J/libgallium_dri.so" "$J/libglapi.so"
+
+          echo "GLAPI exported symbols:"
+          llvm-readelf -Ws "$J/libglapi.so" | grep -E '_mesa_glapi_get_proc_address|_mesa_glapi_tls_Dispatch' || true
+          for sym in _mesa_glapi_get_proc_address _mesa_glapi_tls_Dispatch; do
+            llvm-readelf -Ws "$J/libglapi.so" | grep -E "[[:space:]]${sym}$" >/dev/null || {
+              echo "ERROR: required GLAPI symbol is not exported: $sym"
+              exit 1
+            }
+          done
 
           I="$WORK_ROOT/IronizedZink"
           rm -rf "$I"
           git clone --depth 1 https://github.com/GoyDevv/IronizedZink.git "$I"
           GLXSHIM="$(find "$I" -type f -name 'libglxshim.so' | head -n 1 || true)"
-          test -n "$GLXSHIM"
+          test -n "$GLXSHIM" || { echo "Missing libglxshim.so from IronizedZink"; exit 1; }
           cp "$GLXSHIM" "$J/libglxshim.so"
 
       - name: Add Android libc++ runtime
@@ -393,8 +426,8 @@ jobs:
           ])
           s=s[:old_legacy_start]+new_legacy+s[old_legacy_end:]
           s=s.replace('resValue("string","app_name","XXX Renderer")','resValue("string","app_name","MyTurnipZink")',1)
-          s=s.replace('versionCode = 1','versionCode = 463',1)
-          s=s.replace('versionName = "1.0"','versionName = "0.46.3-zink"',1)
+          s=s.replace('versionCode = 1','versionCode = 464',1)
+          s=s.replace('versionName = "1.0"','versionName = "0.46.4-zink"',1)
           p.write_text(s)
           PYCODE
           grep -n -E 'app_name|displayName|rendererId|rendererGLPath|rendererEGLPath|POJAV_RENDERER|MESA_LOADER_DRIVER_OVERRIDE|versionCode|versionName' app/build.gradle.kts
@@ -456,4 +489,3 @@ jobs:
             echo
             echo "APK is generated only when all required native libraries are present."
           } >> "$GITHUB_STEP_SUMMARY"
-          
