@@ -288,11 +288,15 @@ jobs:
 
           # Renderer APK = Mesa Zink/Kopper only. Turnip is packaged separately.
           EGL_LIB="$(find "$MESA_INSTALL_DIR" -type f -name 'libEGL_mesa.so' | head -n 1 || true)"
-          ZINK_LIB="$(find "$MESA_INSTALL_DIR" -type f -name 'libgallium_dri.so' | head -n 1 || true)"
+          GALLIUM_LIB="$(find "$MESA_INSTALL_DIR" -type f -name 'libgallium_dri.so' | head -n 1 || true)"
           test -n "$EGL_LIB"
-          test -n "$ZINK_LIB"
+          test -n "$GALLIUM_LIB"
           cp "$EGL_LIB" "$J/libEGL_mesa.so"
-          cp "$ZINK_LIB" "$J/libzink_dri.so"
+          # IMPORTANT: libEGL_mesa.so has a DT_NEEDED dependency on
+          # libgallium_dri.so. Keep the exact SONAME filename instead of
+          # renaming it to libzink_dri.so, otherwise Android may resolve an
+          # older libgallium_dri.so from another renderer installation.
+          cp "$GALLIUM_LIB" "$J/libgallium_dri.so"
 
           # Use the same OpenGL entry shim as the working Kopper Zink/Ironized Zink
           # plugins. It is a GLX-to-EGL bridge; Mesa/Zink remains the actual renderer.
@@ -313,13 +317,13 @@ jobs:
       - name: Verify renderer libraries
         run: |
           J="$WORK_ROOT/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
-          for lib in libEGL_mesa.so libzink_dri.so libglxshim.so libc++_shared.so; do
+          for lib in libEGL_mesa.so libgallium_dri.so libglxshim.so libc++_shared.so; do
             test -f "$J/$lib" || { echo "Missing required library: $lib"; exit 1; }
             file "$J/$lib"
           done
           echo "Android system/VNDK dependencies are intentionally not packaged; they are resolved by the Android linker."
           echo "Renderer native dependencies:"
-          for lib in libglxshim.so libEGL_mesa.so libzink_dri.so; do
+          for lib in libglxshim.so libEGL_mesa.so libgallium_dri.so; do
             echo "--- $lib ---"
             llvm-readelf -d "$J/$lib" | grep 'NEEDED' || true
           done
@@ -345,11 +349,12 @@ jobs:
               '                renderer(',
               '                    displayName = "MyTurnipZink | Mesa Zink 26.2.3",',
               '                    rendererId = "opengles3_desktopgl_zink_kopper",',
-              '                    rendererGLPath = "libglxshim.so",',
-              '                    rendererEGLPath = "libEGL_mesa.so",',
-              '                    dlopenLibPaths = emptyList(),',
+              '                    rendererGLPath = nativePath("libglxshim.so"),',
+              '                    rendererEGLPath = nativePath("libEGL_mesa.so"),',
+              '                    dlopenLibPaths = listOf(nativePath("libgallium_dri.so")),',
               '                    env = buildEnvs {',
               '                        normal("LIBGL_ES", "3")',
+              '                        normal("MESA_LOADER_DRIVER_OVERRIDE", "zink")',
               '                    },',
               '                    minMCVer = null,',
               '                    maxMCVer = null,',
@@ -365,8 +370,8 @@ jobs:
               '            manifestPlaceholders.putAll(legacyManifest {',
               '                displayName     = "MyTurnipZink | Mesa Zink 26.2.3"',
               '                rendererName    = "MyTurnipZink | Mesa Zink 26.2.3"',
-              '                rendererLib     = "libglxshim.so"',
-              '                eglLib          = "libEGL_mesa.so"',
+              '                rendererLib     = "/libglxshim.so"',
+              '                eglLib          = "/libEGL_mesa.so"',
               '                minMCVer        = ""',
               '                maxMCVer        = ""',
               '                boatEnv {',
@@ -406,9 +411,13 @@ jobs:
           sha256sum "$APK"
           echo "Native libraries in renderer APK:"
           unzip -l "$APK" | grep 'lib/arm64-v8a/' | sort
-          for lib in libEGL_mesa.so libzink_dri.so libglxshim.so libc++_shared.so; do
+          for lib in libEGL_mesa.so libgallium_dri.so libglxshim.so libc++_shared.so; do
             unzip -l "$APK" | grep -q "lib/arm64-v8a/$lib$" || { echo "Missing $lib from APK"; exit 1; }
           done
+          if unzip -l "$APK" | grep -q 'lib/arm64-v8a/libzink_dri\.so$'; then
+            echo "ERROR: libzink_dri.so must not replace Mesa's required libgallium_dri.so."
+            exit 1
+          fi
           if unzip -l "$APK" | grep -q 'lib/arm64-v8a/libMobileGL\.so$'; then
             echo "ERROR: MobileGL must not be packaged in the Zink renderer APK."
             exit 1
