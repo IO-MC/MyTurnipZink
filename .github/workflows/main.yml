@@ -1043,7 +1043,7 @@ jobs:
 
           # Replace the default empty JVM environment block.
           old = '''            manifestPlaceholders["environment"] = mutableMapOf<String,String>().apply {
-  //                put("example.plugin", "example")
+          //                put("example.plugin", "example")
             }.run {
                 buildList {
                     this@run.forEach { (key, value) ->
