@@ -263,7 +263,7 @@ jobs:
         run: |
           "$MESON_VENV/bin/meson" compile -C turnip-build -j "$(nproc)"
           "$MESON_VENV/bin/meson" install -C turnip-build
-          find "$TURNIP_INSTALL_DIR" -name "libvulkan_freedreno.so" -type f -exec file {} \\;
+          find "$TURNIP_INSTALL_DIR" -name "libvulkan_freedreno.so" -type f -exec file {} \;
 
       - name: Clone RendererPlugin-v2
         run: |
@@ -442,7 +442,7 @@ jobs:
             echo "- Turnip Android NDK: $TURNIP_NDK_VERSION"
             echo "- Architecture: arm64-v8a"
             echo "- Vulkan renderer backend: Zink/Kopper over separate Turnip"
-            echo "- Separate Vulkan driver APK: Turnip (Mesa $MESA_DRIVER_VERSION)"
+            echo "- Separate Vulkan driver APK: Turnip (Mesa commit $MESA_COMMIT)"
             echo "- OpenGL: Mesa Zink/Kopper 26.3.0 -> Turnip 26.3.0"
             echo "- Target GPU: Adreno 618"
             echo
