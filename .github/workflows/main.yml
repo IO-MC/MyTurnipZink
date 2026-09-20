@@ -299,13 +299,6 @@ jobs:
           test -n "$GLXSHIM"
           cp "$GLXSHIM" "$J/libglxshim.so"
 
-          # Preserve the Mesa-side Android helper/runtime dependencies used by the
-          # previous successful renderer packaging.
-          for lib in libcutils.so libhardware.so libexpat.so libxml2.so libarchive.so; do
-            F="$(find "$MESA_INSTALL_DIR" -type f -name "$lib" | head -n 1 || true)"
-            [ -z "$F" ] || cp "$F" "$J/$lib"
-          done
-
       - name: Add Android libc++ runtime
         run: |
           J="$WORK_ROOT/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
@@ -316,10 +309,11 @@ jobs:
       - name: Verify renderer libraries
         run: |
           J="$WORK_ROOT/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
-          for lib in libEGL_mesa.so libzink_dri.so libglxshim.so libcutils.so libhardware.so libc++_shared.so; do
+          for lib in libEGL_mesa.so libzink_dri.so libglxshim.so libc++_shared.so; do
             test -f "$J/$lib" || { echo "Missing required library: $lib"; exit 1; }
             file "$J/$lib"
           done
+          echo "Android system/VNDK dependencies are intentionally not packaged; they are resolved by the Android linker."
           echo "Renderer native dependencies:"
           for lib in libglxshim.so libEGL_mesa.so libzink_dri.so; do
             echo "--- $lib ---"
