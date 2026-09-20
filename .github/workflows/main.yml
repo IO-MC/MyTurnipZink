@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  MESA_COMMIT: 8d68f369fc1
+  MESA_REF: mesa-26.2.3
   ANDROID_API: 33
   ANDROID_NDK_VERSION: 28.2.13676358
   TURNIP_ANDROID_API: 30
@@ -86,10 +86,14 @@ jobs:
       - name: Clone Mesa
         run: |
           rm -rf "$MESA_DIR"
-          git clone https://gitlab.freedesktop.org/mesa/mesa.git "$MESA_DIR"
+          git clone --depth 1 --branch "$MESA_REF" https://gitlab.freedesktop.org/mesa/mesa.git "$MESA_DIR"
           cd "$MESA_DIR"
-          git checkout "$MESA_COMMIT"
           git rev-parse HEAD
+          MESA_VERSION="$(tr -d '\r\n' < VERSION)"
+          test "$MESA_VERSION" = "26.2.3"
+          echo "MESA_VERSION=$MESA_VERSION" >> "$GITHUB_ENV"
+          echo "Mesa ref: $MESA_REF"
+          echo "Mesa version: $MESA_VERSION"
 
       - name: Build SPIR-V LLVM Translator
         run: |
@@ -339,7 +343,7 @@ jobs:
           new_v2='\n'.join([
               '            resValue("string", "config", buildJsonValue {',
               '                renderer(',
-              '                    displayName = "MyTurnipZink | Mesa Zink 26.3.0",',
+              '                    displayName = "MyTurnipZink | Mesa Zink 26.2.3",',
               '                    rendererId = "opengles3_desktopgl_zink_kopper",',
               '                    rendererGLPath = "libglxshim.so",',
               '                    rendererEGLPath = "libEGL_mesa.so",',
@@ -359,8 +363,8 @@ jobs:
           old_legacy_end=s.index('            })', old_legacy_start)+len('            })')
           new_legacy='\n'.join([
               '            manifestPlaceholders.putAll(legacyManifest {',
-              '                displayName     = "MyTurnipZink | Mesa Zink 26.3.0"',
-              '                rendererName    = "MyTurnipZink | Mesa Zink 26.3.0"',
+              '                displayName     = "MyTurnipZink | Mesa Zink 26.2.3"',
+              '                rendererName    = "MyTurnipZink | Mesa Zink 26.2.3"',
               '                rendererLib     = "libglxshim.so"',
               '                eglLib          = "libEGL_mesa.so"',
               '                minMCVer        = ""',
@@ -426,15 +430,16 @@ jobs:
           {
             echo "# MyTurnipZink 0.46.3"
             echo
-            echo "- Mesa commit: \`$MESA_COMMIT\`"
+            echo "- Mesa ref: \`$MESA_REF\`"
+            echo "- Mesa version: \`$MESA_VERSION\`"
             echo "- Renderer Android API: $ANDROID_API"
             echo "- Renderer Android NDK: $ANDROID_NDK_VERSION"
             echo "- Turnip Android API: $TURNIP_ANDROID_API"
             echo "- Turnip Android NDK: $TURNIP_NDK_VERSION"
             echo "- Architecture: arm64-v8a"
             echo "- Vulkan renderer backend: Zink/Kopper over separate Turnip"
-            echo "- Separate Vulkan driver APK: Turnip (Mesa commit $MESA_COMMIT)"
-            echo "- OpenGL: Mesa Zink/Kopper 26.3.0 -> Turnip 26.3.0"
+            echo "- Separate Vulkan driver APK: Turnip (Mesa $MESA_VERSION)"
+            echo "- OpenGL: Mesa Zink/Kopper $MESA_VERSION -> Turnip $MESA_VERSION"
             echo "- Target GPU: Adreno 618"
             echo
             echo "APK is generated only when all required native libraries are present."
