@@ -11,8 +11,8 @@ permissions:
 env:
   MESA_COMMIT: 8d68f369fc1
   MOBILEGL_COMMIT: fff9d639f06cad2aedb5ac0b93c523d7ca153fdc
-  ANDROID_API: 33
-  ANDROID_NDK_VERSION: 28.2.13676358
+  ANDROID_API: 30
+  ANDROID_NDK_VERSION: 30.0.14904198
   WORK_ROOT: ${{ github.workspace }}
   MESA_DIR: ${{ github.workspace }}/mesa
   MESA_COMPILER_DIR: ${{ github.workspace }}/mesa-compiler
@@ -164,7 +164,7 @@ jobs:
           cat > "$WORK_ROOT/android-aarch64.txt" <<EOF
           [binaries]
           c = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang'
-          cpp = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang++'
+          cpp = ['$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '--start-no-unused-arguments', '-static-libstdc++', '--end-no-unused-arguments']
           ar = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
           strip = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
           ranlib = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib'
@@ -205,12 +205,14 @@ jobs:
             --prefix "$MESA_INSTALL_DIR" \
             -Dbuildtype=release -Dstrip=true -Dplatforms=android \
             -Dplatform-sdk-version="$ANDROID_API" -Dandroid-stub=true \
-            -Dandroid-libbacktrace=disabled -Degl=enabled -Dgles2=enabled -Dgles1=disabled \
-            -Dglx=disabled -Degl-lib-suffix=_mesa -Dgles-lib-suffix=_mesa \
-            -Dshared-glapi=enabled -Dgallium-drivers=zink -Dvulkan-drivers=freedreno \
+            -Dandroid-libbacktrace=disabled -Degl=disabled -Dgles2=disabled -Dgles1=disabled \
+            -Dglx=disabled -Dgbm=disabled \
+            -Dgallium-drivers= -Dvulkan-drivers=freedreno \
             -Dfreedreno-kmds=kgsl -Dvulkan-beta=true -Dllvm=disabled -Ddraw-use-llvm=false \
             -Dmesa-clc=system -Dprecomp-compiler=system -Dspirv-tools=disabled \
-            -Dzstd=disabled -Dzlib=enabled -Dshader-cache=disabled -Dbuild-tests=false
+            -Dshared-glapi=disabled -Dzstd=disabled -Dzlib=enabled \
+            -Dshader-cache=disabled -Dbuild-tests=false -Db_lto=false -Dcpp_rtti=false \
+            -Dcpp_link_args="-static-libstdc++"
 
       - name: Build and install Mesa
         working-directory: ${{ env.MESA_DIR }}
@@ -359,18 +361,17 @@ jobs:
           # Turnip is a standalone Vulkan driver library, not an Android HAL module.
           # HMI is only required by Android's platform Vulkan HAL loader.
           llvm-readelf -h "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep -E 'Class:.*ELF64|Machine:.*AArch64'
-          llvm-nm -D --defined-only "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep -E 'vkGetInstanceProcAddr$|vk_icdGetInstanceProcAddr$' || true
-
-          # Mesa/Turnip built with the Android NDK may depend on libc++_shared.so.
-          # Package the exact NDK runtime with the driver instead of rejecting it.
-          NDK_LIBCXX="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
-          test -f "$NDK_LIBCXX"
-          cp "$NDK_LIBCXX" "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libc++_shared.so"
+          # The working Zalith Turnip 26.1.6 reference exports HMI and has no
+          # libc++_shared.so dependency. Validate the same Android Turnip shape.
+          llvm-nm -D --defined-only "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep -E '\bHMI$'
 
           echo "Turnip dynamic dependencies:"
           llvm-readelf -d "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep 'NEEDED' || true
-          echo "Bundled libc++ runtime:"
-          file "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libc++_shared.so"
+          if llvm-readelf -d "$DRIVER_ROOT/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so" | grep -q 'libc++_shared\.so'; then
+            echo "ERROR: Turnip still depends on libc++_shared.so; static libc++ build did not take effect."
+            exit 1
+          fi
+          echo "Verified: no libc++_shared.so dependency in Turnip."
 
           echo "TURNIP_DRIVER_ROOT=$DRIVER_ROOT" >> "$GITHUB_ENV"
 
@@ -555,8 +556,8 @@ jobs:
             echo
             echo "- Mesa commit: \`$MESA_COMMIT\`"
             echo "- MobileGL commit: \`$MOBILEGL_COMMIT\`"
-            echo "- Android API: $ANDROID_API"
-            echo "- Android NDK: $ANDROID_NDK_VERSION"
+            echo "- Turnip Android API: $ANDROID_API"
+            echo "- Turnip Android NDK: $ANDROID_NDK_VERSION"
             echo "- Architecture: arm64-v8a"
             echo "- Vulkan renderer backend: MobileGL DirectVulkan"
             echo "- Separate Vulkan driver APK: Turnip (Mesa $MESA_DRIVER_VERSION)"
