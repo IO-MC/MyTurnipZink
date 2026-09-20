@@ -152,7 +152,9 @@ jobs:
           echo "/usr/local/lib" | sudo tee /etc/ld.so.conf.d/llvm-spirv.conf >/dev/null
           sudo ldconfig
 
-          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+          {
+          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+          } >> "$GITHUB_ENV"
 
           test -x /usr/local/bin/llvm-spirv
           test -f /usr/local/lib/pkgconfig/LLVMSPIRVLib.pc
