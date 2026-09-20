@@ -285,13 +285,10 @@ jobs:
           # Renderer APK = Mesa Zink/Kopper only. Turnip is packaged separately.
           EGL_LIB="$(find "$MESA_INSTALL_DIR" -type f -name 'libEGL_mesa.so' | head -n 1 || true)"
           ZINK_LIB="$(find "$MESA_INSTALL_DIR" -type f -name 'libgallium_dri.so' | head -n 1 || true)"
-          GLAPI_LIB="$(find "$MESA_INSTALL_DIR" -type f -name 'libglapi.so' | head -n 1 || true)"
           test -n "$EGL_LIB"
           test -n "$ZINK_LIB"
-          test -n "$GLAPI_LIB"
           cp "$EGL_LIB" "$J/libEGL_mesa.so"
           cp "$ZINK_LIB" "$J/libzink_dri.so"
-          cp "$GLAPI_LIB" "$J/libglapi.so"
 
           # Use the same OpenGL entry shim as the working Kopper Zink/Ironized Zink
           # plugins. It is a GLX-to-EGL bridge; Mesa/Zink remains the actual renderer.
@@ -319,7 +316,7 @@ jobs:
       - name: Verify renderer libraries
         run: |
           J="$WORK_ROOT/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
-          for lib in libEGL_mesa.so libzink_dri.so libglapi.so libglxshim.so libcutils.so libhardware.so libc++_shared.so; do
+          for lib in libEGL_mesa.so libzink_dri.so libglxshim.so libcutils.so libhardware.so libc++_shared.so; do
             test -f "$J/$lib" || { echo "Missing required library: $lib"; exit 1; }
             file "$J/$lib"
           done
