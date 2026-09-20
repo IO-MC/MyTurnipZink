@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Mesa Zink + Turnip
+    name: Build Mesa Zink + Turnip + RendererPlugin
     runs-on: ubuntu-22.04
     env:
       ANDROID_NDK_VERSION: "27.2.12479018"
@@ -44,21 +44,24 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Export Android NDK environment
+      - name: Setup Android NDK
         uses: android-actions/setup-ndk@v3
         with:
           ndk-version: ${{ env.ANDROID_NDK_VERSION }}
 
       - name: Verify toolchain
         run: |
+          set -eux
           echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT"
-          "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android-clang" --version
+          "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang" --version
+          "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" --version
           meson --version
           ninja --version
           java -version
 
       - name: Clone Mesa
         run: |
+          set -eux
           git clone --depth 1 --branch mesa-${MESA_VERSION} \
             https://gitlab.freedesktop.org/mesa/mesa.git mesa
           curl -L --fail --silent --show-error \
@@ -70,6 +73,7 @@ jobs:
 
       - name: Build SPIR-V LLVM Translator
         run: |
+          set -eux
           git clone --depth 1 --branch v20.1.0 \
             https://github.com/KhronosGroup/SPIRV-LLVM-Translator.git spirv-llvm-translator
           cmake -S spirv-llvm-translator -B spirv-llvm-translator/build \
@@ -78,7 +82,7 @@ jobs:
           cmake --build spirv-llvm-translator/build -j"$(nproc)"
           sudo cmake --install spirv-llvm-translator/build
 
-      - name: Create Mesa cross file
+      - name: Create Mesa Android cross file
         run: |
           cat > /tmp/mesa-cross.txt <<EOF
           [binaries]
@@ -88,20 +92,27 @@ jobs:
           strip = '${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
           ranlib = '${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib'
           pkgconfig = 'pkg-config'
+
           [host_machine]
           system = 'android'
           cpu_family = 'aarch64'
           cpu = 'arm64'
           endian = 'little'
+
           [properties]
           needs_exe_wrapper = true
+
           [built-in options]
           c_args = ['-fPIC']
           cpp_args = ['-fPIC']
           EOF
 
-      - name: Configure Mesa
+      - name: Configure Mesa Zink
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig
+          PKG_CONFIG_LIBDIR: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig
         run: |
+          set -eux
           rm -rf mesa-build mesa-prefix
           mkdir -p mesa-prefix
           meson setup mesa-build mesa \
@@ -123,14 +134,19 @@ jobs:
             -Dvideo-codecs= \
             -Dvulkan-layers=disabled
 
-      - name: Build and install Mesa
+      - name: Build and install Mesa Zink
         run: |
+          set -eux
           meson compile -C mesa-build -j"$(nproc)"
           meson install -C mesa-build
           find mesa-prefix -type f | sort
 
-      - name: Configure standalone Turnip Mesa
+      - name: Configure standalone Turnip
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig
+          PKG_CONFIG_LIBDIR: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig
         run: |
+          set -eux
           rm -rf turnip-build turnip-prefix
           mkdir -p turnip-prefix
           meson setup turnip-build mesa \
@@ -148,14 +164,30 @@ jobs:
             -Dfreedreno-kmds=msm \
             -Dvulkan-layers=disabled
 
-      - name: Build and install standalone Turnip Mesa
+      - name: Build and install standalone Turnip
         run: |
+          set -eux
           meson compile -C turnip-build -j"$(nproc)"
           meson install -C turnip-build
           find turnip-prefix -type f | sort
 
+      - name: Verify standalone Turnip ELF and Vulkan entry points
+        run: |
+          set -eux
+          READ_ELF="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          NM="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          TURNIP_SO="$(find "$GITHUB_WORKSPACE/turnip-prefix" -type f \
+            \( -name 'libvulkan_freedreno.so' -o -name 'libvulkan_freedreno.so.*' \) \
+            | head -n1 || true)"
+          test -n "$TURNIP_SO"
+          test -s "$TURNIP_SO"
+          "$READ_ELF" -h "$TURNIP_SO" | grep -E 'Class:.*ELF64|Machine:.*AArch64'
+          "$NM" -D "$TURNIP_SO" | grep -E 'vkGetInstanceProcAddr$|vk_icdGetInstanceProcAddr$'
+
       - name: Clone RendererPlugin-v2
-        run: git clone --depth 1 "$RENDERER_REPO" renderer-plugin
+        run: |
+          set -eux
+          git clone --depth 1 "$RENDERER_REPO" renderer-plugin
 
       - name: Prepare renderer plugin libraries
         run: |
@@ -165,12 +197,15 @@ jobs:
           EGL_LIB="$(find "$GITHUB_WORKSPACE/mesa-prefix" -type f -name 'libEGL_mesa.so' | head -n1 || true)"
           GALLIUM_LIB="$(find "$GITHUB_WORKSPACE/mesa-prefix" -type f -name 'libgallium_dri.so' | head -n1 || true)"
           GLAPI_LIB="$(find "$GITHUB_WORKSPACE/mesa-prefix" -type f \( -name 'libglapi.so' -o -name 'libglapi.so.*' \) | head -n1 || true)"
+          GLXSHIM_LIB="$(find "$GITHUB_WORKSPACE/renderer-plugin" -type f -name 'libglxshim.so' | head -n1 || true)"
           test -n "$EGL_LIB"
           test -n "$GALLIUM_LIB"
           test -n "$GLAPI_LIB"
+          test -n "$GLXSHIM_LIB"
           cp "$EGL_LIB" "$J/libEGL_mesa.so"
           cp "$GALLIUM_LIB" "$J/libgallium_dri.so"
           cp "$GLAPI_LIB" "$J/libglapi.so"
+          cp "$GLXSHIM_LIB" "$J/libglxshim.so"
           printf '%s\n' libglapi.so libgallium_dri.so libEGL_mesa.so libglxshim.so > "$J/MYT_MESA_LOAD_ORDER.txt"
 
       - name: Add Android libc++ runtime
@@ -184,16 +219,13 @@ jobs:
         run: |
           set -eux
           J="$GITHUB_WORKSPACE/renderer-plugin/renderer/src/main/jniLibs/arm64-v8a"
-          ls -lh "$J"
-          for f in libglapi.so libgallium_dri.so libEGL_mesa.so libc++_shared.so; do
+          READ_ELF="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          for f in libglapi.so libgallium_dri.so libEGL_mesa.so libglxshim.so libc++_shared.so; do
             test -s "$J/$f"
-            readelf -h "$J/$f" | grep -E 'Class:|Machine:'
+            "$READ_ELF" -h "$J/$f" | grep -E 'Class:.*ELF64|Machine:.*AArch64'
           done
-          echo "=== libEGL_mesa.so dependencies ==="
-          readelf -d "$J/libEGL_mesa.so" | grep NEEDED || true
-          echo "=== GLAPI exports ==="
-          readelf -Ws "$J/libglapi.so" | grep -E '_mesa_glapi_(get_proc_address|tls_Dispatch)' || true
-          echo "=== GLXShim loader strings ==="
+          "$READ_ELF" -d "$J/libEGL_mesa.so" | grep NEEDED || true
+          "$READ_ELF" -Ws "$J/libglapi.so" | grep -E '_mesa_glapi_(get_proc_address|tls_Dispatch)' || true
           strings "$J/libglxshim.so" | grep -E 'POJAVEXEC_EGL|LIBEGL_NAME|SDL_EGL_LIBRARY|context init failed' || true
 
       - name: Configure renderer as Zink/Kopper
@@ -204,25 +236,36 @@ jobs:
             -E 'rendererGLPath.*libglxshim\.so|rendererEGLPath.*libEGL_mesa\.so' \
             "$R" | head -n1 || true)"
           test -n "$CONFIG_FILE"
-          echo "Renderer config: $CONFIG_FILE"
           python3 - "$CONFIG_FILE" <<'PY'
           from pathlib import Path
-          import re, sys
+          import re
+          import sys
+
           p = Path(sys.argv[1])
           s = p.read_text()
+
           if 'rendererGLPath = nativePath("libglxshim.so")' not in s:
               raise SystemExit("rendererGLPath for libglxshim.so not found")
           if 'rendererEGLPath = nativePath("libEGL_mesa.so")' not in s:
               raise SystemExit("rendererEGLPath for libEGL_mesa.so not found")
-          replacement = '''dlopenLibPaths = listOf(
-                    nativePath("libglapi.so"),
-                    nativePath("libgallium_dri.so")
-                )'''
+
+          replacement = 'dlopenLibPaths = listOf(\n                    nativePath("libglapi.so"),\n                    nativePath("libgallium_dri.so")\n                )'
           s = re.sub(r'dlopenLibPaths\s*=\s*listOf\([^)]*\)', replacement, s, count=1, flags=re.S)
+
           if 'normal("LIBGL_ES", "3")' not in s:
-              s = s.replace('env = buildEnvs {', 'env = buildEnvs {\n                    normal("LIBGL_ES", "3")\n                    normal("MESA_LOADER_DRIVER_OVERRIDE", "zink")')
+              s = s.replace(
+                  'env = buildEnvs {',
+                  'env = buildEnvs {\n'
+                  '                    normal("LIBGL_ES", "3")\n'
+                  '                    normal("MESA_LOADER_DRIVER_OVERRIDE", "zink")'
+              )
           elif 'normal("MESA_LOADER_DRIVER_OVERRIDE", "zink")' not in s:
-              s = s.replace('normal("LIBGL_ES", "3")', 'normal("LIBGL_ES", "3")\n                    normal("MESA_LOADER_DRIVER_OVERRIDE", "zink")')
+              s = s.replace(
+                  'normal("LIBGL_ES", "3")',
+                  'normal("LIBGL_ES", "3")\n'
+                  '                    normal("MESA_LOADER_DRIVER_OVERRIDE", "zink")'
+              )
+
           p.write_text(s)
           PY
           grep -RIn --include='*.kt' --include='*.kts' \
@@ -235,19 +278,41 @@ jobs:
           chmod +x ./gradlew
           ./gradlew --no-daemon :renderer:assembleDebug
 
-      - name: Verify APK
+      - name: Verify renderer APK
         run: |
           set -eux
           APK="$(find "$GITHUB_WORKSPACE/renderer-plugin" -type f -name 'app-debug.apk' | head -n1)"
           test -n "$APK"
+          test -s "$APK"
           mkdir -p /tmp/apk
           unzip -q "$APK" -d /tmp/apk
+          READ_ELF="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          NM="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
           for f in libEGL_mesa.so libglapi.so libgallium_dri.so libglxshim.so libc++_shared.so; do
             test -s "/tmp/apk/lib/arm64-v8a/$f"
+            "$READ_ELF" -h "/tmp/apk/lib/arm64-v8a/$f" | grep -E 'Class:.*ELF64|Machine:.*AArch64'
           done
+          "$READ_ELF" -d /tmp/apk/lib/arm64-v8a/libEGL_mesa.so | grep NEEDED || true
+          "$NM" -D /tmp/apk/lib/arm64-v8a/libglapi.so | grep -E '_mesa_glapi_(get_proc_address|tls_Dispatch)' || true
           find /tmp/apk/lib/arm64-v8a -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
-          readelf -d /tmp/apk/lib/arm64-v8a/libEGL_mesa.so | grep NEEDED || true
-          readelf -Ws /tmp/apk/lib/arm64-v8a/libglapi.so | grep -E '_mesa_glapi_(get_proc_address|tls_Dispatch)' || true
+
+      - name: Package standalone Turnip driver
+        run: |
+          set -eux
+          mkdir -p turnip-driver/arm64-v8a
+          TURNIP_SO="$(find "$GITHUB_WORKSPACE/turnip-prefix" -type f \
+            \( -name 'libvulkan_freedreno.so' -o -name 'libvulkan_freedreno.so.*' \) \
+            | head -n1)"
+          test -n "$TURNIP_SO"
+          cp "$TURNIP_SO" turnip-driver/arm64-v8a/libvulkan_freedreno.so
+          cat > turnip-driver/README.txt <<EOF
+          MyTurnipZink Mesa ${MESA_VERSION}
+          Target: Android arm64-v8a / Freedreno Turnip
+          Intended test path: MobileGL DirectVulkan -> standalone Turnip -> Adreno 618
+          Zalith Launcher 2 / Redmi Note 10 Pro
+          EOF
+          cd turnip-driver
+          zip -r ../MyTurnipZink-Turnip-Driver.zip .
 
       - name: Upload renderer APK
         uses: actions/upload-artifact@v4
@@ -257,10 +322,20 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      - name: Upload standalone Turnip driver
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyTurnipZink-Turnip-Driver
+          path: MyTurnipZink-Turnip-Driver.zip
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Build summary
         if: always()
         run: |
-          echo "Mesa ${MESA_VERSION}"
-          echo "Target: Zink/Kopper + Turnip"
-          echo "Renderer libraries: libglapi + libgallium_dri + libEGL_mesa + libglxshim"
+          echo "Mesa: ${MESA_VERSION}"
+          echo "Target: Zink/Kopper + standalone Turnip"
+          echo "Architecture: Android arm64-v8a / AArch64"
+          echo "Renderer: RendererPlugin-v2"
+          echo "Artifacts: MyTurnipZink-Renderer-APK, MyTurnipZink-Turnip-Driver"
           
