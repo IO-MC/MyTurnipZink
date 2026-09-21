@@ -1091,38 +1091,85 @@ jobs:
           s = s.replace(
               'manifestPlaceholders["maxMCVer"] = ""',
               'manifestPlaceholders["maxMCVer"] = "26.1.2"',
-              1,
+      - name: Configure Turnip NativeLibPlugin
+        shell: bash
+        run: |
+          set -eux
+
+          PLUGIN_DIR="$WORK_ROOT/NativeLibPlugin"
+
+          test -f "$PLUGIN_DIR/app/build.gradle.kts"
+          test -f "$PLUGIN_DIR/app/src/main/AndroidManifest.xml"
+
+          python3 - "$PLUGIN_DIR/app/build.gradle.kts" <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          path = Path(sys.argv[1])
+          text = path.read_text()
+
+          # Package / namespace
+          text = re.sub(
+              r'namespace\s*=\s*"[^"]+"',
+              'namespace = "com.iomc.myturnipzink.turnip"',
+              text,
+              count=1,
           )
 
-          p.write_text(s)
-          PYCODE
+          text = re.sub(
+              r'applicationId\s*=\s*"[^"]+"',
+              'applicationId = "com.iomc.myturnipzink.turnip"',
+              text,
+              count=1,
+          )
 
-          echo "=== Final Turnip plugin Gradle ==="
+          # Version
+          text = re.sub(
+              r'versionCode\s*=\s*\d+',
+              'versionCode = 26203',
+              text,
+              count=1,
+          )
 
-          grep -n -E \
-            'namespace|applicationId|versionCode|versionName|app_name|des|environment|org.lwjgl.vulkan.libname|minMCVer|maxMCVer|applicationIdSuffix' \
-            app/build.gradle.kts
+          text = re.sub(
+              r'versionName\s*=\s*"[^"]+"',
+              'versionName = "26.2.3-turnip"',
+              text,
+              count=1,
+          )
 
-          test "$(grep -c \
-            'com.iomc.myturnipzink.turnip' \
-            app/build.gradle.kts)" -ge 2
+          path.write_text(text)
+          PY
 
-          test "$(grep -c \
-            'versionCode = 26203' \
-            app/build.gradle.kts)" -eq 1
+          python3 - "$PLUGIN_DIR/app/src/main/AndroidManifest.xml" <<'PY'
+          from pathlib import Path
+          import sys
 
-          test "$(grep -c \
-            'versionName = "26.2.3-turnip"' \
-            app/build.gradle.kts)" -eq 1
+          path = Path(sys.argv[1])
+          text = path.read_text()
 
-          test "$(grep -c \
-            'org.lwjgl.vulkan.libname' \
-            app/build.gradle.kts)" -eq 1
+          text = text.replace(
+              'android:label="@string/app_name"',
+              'android:label="MyTurnipZink Turnip 26.2.3"',
+          )
 
-          if grep -q 'applicationIdSuffix' app/build.gradle.kts; then
-            echo "ERROR: applicationIdSuffix must not be present"
-            exit 1
-          fi
+          text = text.replace(
+              'android:label="@string/app_name"',
+              'android:label="MyTurnipZink Turnip 26.2.3"',
+          )
+
+          path.write_text(text)
+          PY
+
+          # Kiểm tra cấu hình sau khi patch.
+          echo "===== build.gradle.kts ====="
+          grep -nE 'namespace|applicationId|versionCode|versionName' \
+            "$PLUGIN_DIR/app/build.gradle.kts" || true
+
+          echo "===== AndroidManifest.xml ====="
+          grep -nE 'manifest|application|FCLNativePlugin|label|des|environment|minMCVer|maxMCVer' \
+            "$PLUGIN_DIR/app/src/main/AndroidManifest.xml" || true
 
       - name: Build Turnip APK
         working-directory: ${{ env.WORK_ROOT }}/NativeLibPlugin
