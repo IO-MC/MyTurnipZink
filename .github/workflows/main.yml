@@ -210,6 +210,13 @@ jobs:
 
       # ============================================================
       # 7. SPIR-V LLVM Translator
+      #
+      # IMPORTANT:
+      # LLVM on ubuntu-24.04 runner is LLVM 18.
+      # Keep translator pinned to llvm_release_180.
+      #
+      # Do NOT clone translator HEAD because newer HEAD requires
+      # LLVM 24 and will fail against the runner's LLVM 18.
       # ============================================================
 
       - name: Clone SPIR-V LLVM Translator
@@ -218,9 +225,13 @@ jobs:
 
           cd "$WORK_ROOT"
 
-          git clone --depth=1 \
+          git clone \
+            --depth 1 \
+            --branch llvm_release_180 \
             https://github.com/KhronosGroup/SPIRV-LLVM-Translator.git \
             SPIRV-LLVM-Translator
+
+          git -C SPIRV-LLVM-Translator rev-parse HEAD
 
       - name: Build SPIR-V LLVM Translator
         run: |
@@ -228,15 +239,19 @@ jobs:
 
           cd "$WORK_ROOT/SPIRV-LLVM-Translator"
 
+          rm -rf build
+
           mkdir -p build
           cd build
 
           cmake .. \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DLLVM_DIR="$(llvm-config --cmakedir)"
+            -DLLVM_DIR="$(llvm-config --cmakedir)" \
+            -DLLVM_SPIRV_INCLUDE_TESTS=OFF
 
-          ninja -j"$(nproc)"
+          ninja \
+            -j"$(nproc)"
 
       # ============================================================
       # 8. Download Mesa 26.2.3
