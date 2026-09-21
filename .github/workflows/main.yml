@@ -15,13 +15,15 @@ jobs:
 
     env:
       MESA_VERSION: "26.2.3"
+      FCL_DRIVER_COMMIT: "0ded0742f524097bb43943463a94956c64d6e96b"
+      RENDERER_PLUGIN_COMMIT: "1591ff84c3ddda0c95ae1e72ef1f6608cb331b7d"
       WORK_ROOT: ${{ github.workspace }}/work
       ANDROID_NDK_VERSION: "27.2.12479018"
 
     steps:
 
       # ============================================================
-      # 1. System dependencies
+      # 1. Checkout / dependencies
       # ============================================================
 
       - name: Checkout
@@ -132,6 +134,9 @@ jobs:
           "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" \
             --version
 
+          test -x \
+            "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
+
       # ============================================================
       # 4. Workspace
       # ============================================================
@@ -142,8 +147,6 @@ jobs:
 
           rm -rf "$WORK_ROOT"
           mkdir -p "$WORK_ROOT"
-
-          echo "WORK_ROOT=$WORK_ROOT"
 
       # ============================================================
       # 5. SPIR-V LLVM Translator
@@ -197,17 +200,7 @@ jobs:
           mv "mesa-${MESA_VERSION}" mesa
 
       # ============================================================
-      # 7. Mesa Android dependencies
-      # ============================================================
-
-      - name: Prepare Mesa Android dependencies
-        run: |
-          set -eux
-
-          mkdir -p "$WORK_ROOT/mesa-build"
-
-      # ============================================================
-      # 8. Mesa native compiler
+      # 7. Mesa native compiler
       # ============================================================
 
       - name: Configure Mesa native compiler
@@ -236,7 +229,7 @@ jobs:
             -j"$(nproc)"
 
       # ============================================================
-      # 9. Mesa Zink / Kopper
+      # 8. Mesa Zink / Kopper
       # ============================================================
 
       - name: Configure Mesa Zink/Kopper
@@ -274,7 +267,7 @@ jobs:
             -j"$(nproc)"
 
       # ============================================================
-      # 10. Build standalone Turnip
+      # 9. Standalone Turnip
       # ============================================================
 
       - name: Configure Turnip
@@ -312,14 +305,12 @@ jobs:
             -j"$(nproc)"
 
       # ============================================================
-      # 11. Find native libraries
+      # 10. Locate native libraries
       # ============================================================
 
       - name: Locate native libraries
         run: |
           set -eux
-
-          mkdir -p "$WORK_ROOT/native"
 
           echo "=== Turnip ==="
 
@@ -328,6 +319,7 @@ jobs:
             -name 'libvulkan_freedreno.so' \
             -print
 
+          echo
           echo "=== Mesa Zink ==="
 
           find "$WORK_ROOT/mesa-zink-build" \
@@ -336,11 +328,13 @@ jobs:
               -name 'libEGL_mesa.so' \
               -o -name 'libgallium_dri.so' \
               -o -name 'libzink_dri.so' \
+              -o -name 'libglapi.a' \
+              -o -name 'libglapi.so*' \
             \) \
             -print
 
       # ============================================================
-      # 12. RendererPlugin-v2
+      # 11. RendererPlugin-v2
       # ============================================================
 
       - name: Clone RendererPlugin-v2
@@ -355,21 +349,20 @@ jobs:
 
           cd RendererPlugin-v2
 
-          git checkout \
-            1591ff84c3ddda0c95ae1e72ef1f6608cb331b7d
+          git checkout "$RENDERER_PLUGIN_COMMIT"
 
       # ============================================================
-      # 13. Prepare renderer native libraries
+      # 12. Prepare renderer native libraries
       # ============================================================
 
-      - name: Prepare renderer plugin libraries
+      - name: Prepare renderer native libraries
         run: |
           set -eux
 
           R="$WORK_ROOT/RendererPlugin-v2"
+          OUT="$R/app/src/main/jniLibs/arm64-v8a"
 
-          mkdir -p \
-            "$R/app/src/main/jniLibs/arm64-v8a"
+          mkdir -p "$OUT"
 
           EGL="$(find "$WORK_ROOT/mesa-zink-build" \
             -type f \
@@ -390,38 +383,59 @@ jobs:
           test -n "$GALLIUM"
           test -n "$ZINK"
 
-          cp "$EGL" \
-            "$R/app/src/main/jniLibs/arm64-v8a/libEGL_mesa.so"
+          cp "$EGL" "$OUT/libEGL_mesa.so"
+          cp "$GALLIUM" "$OUT/libgallium_dri.so"
+          cp "$ZINK" "$OUT/libzink_dri.so"
 
-          cp "$GALLIUM" \
-            "$R/app/src/main/jniLibs/arm64-v8a/libgallium_dri.so"
+          # --------------------------------------------------------
+          # libc++ runtime required by Android native components
+          # --------------------------------------------------------
 
-          cp "$ZINK" \
-            "$R/app/src/main/jniLibs/arm64-v8a/libzink_dri.so"
+          CXX_SHARED="$ANDROID_NDK_HOME/sources/cxx-stl/llvm-libc++/libs/arm64-v8a/libc++_shared.so"
 
-          GLAPI="$(find \
-            "$WORK_ROOT/mesa-zink-build" \
-            "$WORK_ROOT/mesa" \
-            -type f \
-            -name 'libglapi.so*' \
-            | head -n1 || true)"
+          test -f "$CXX_SHARED"
 
-          if [ -n "$GLAPI" ]; then
-            cp "$GLAPI" \
-              "$R/app/src/main/jniLibs/arm64-v8a/libglapi.so"
+          cp "$CXX_SHARED" \
+            "$OUT/libc++_shared.so"
+
+          # --------------------------------------------------------
+          # Mesa 26.2.x may only produce static libglapi.a.
+          # Build a shared libglapi.so so it can be preloaded by ZL2.
+          # --------------------------------------------------------
+
+          GLAPI="$OUT/libglapi.so"
+
+          if [ ! -f "$GLAPI" ]; then
+            GLAPI_A="$(find "$WORK_ROOT/mesa-zink-build" \
+              "$WORK_ROOT/mesa" \
+              -type f \
+              -name 'libglapi.a' \
+              | head -n1 || true)"
+
+            if [ -z "$GLAPI_A" ]; then
+              echo "ERROR: libglapi.a not found"
+              exit 1
+            fi
+
+            "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang" \
+              -shared \
+              -fPIC \
+              -Wl,--whole-archive \
+              "$GLAPI_A" \
+              -Wl,--no-whole-archive \
+              -ldl \
+              -llog \
+              -o "$GLAPI"
           fi
 
-          echo "=== Renderer native libraries ==="
+          test -s "$OUT/libglapi.so"
 
-          find \
-            "$R/app/src/main/jniLibs/arm64-v8a" \
-            -maxdepth 1 \
-            -type f \
-            -printf '%f\n' \
-            | sort
+          echo "=== Renderer native directory ==="
+
+          ls -lh "$OUT"
 
       # ============================================================
-      # 14. Verify renderer ELF
+      # 13. Verify renderer ELF
       # ============================================================
 
       - name: Verify renderer ELF
@@ -430,19 +444,35 @@ jobs:
 
           R="$WORK_ROOT/RendererPlugin-v2/app/src/main/jniLibs/arm64-v8a"
 
-          test -f "$R/libEGL_mesa.so"
-          test -f "$R/libgallium_dri.so"
-          test -f "$R/libzink_dri.so"
+          for f in \
+            libEGL_mesa.so \
+            libgallium_dri.so \
+            libzink_dri.so \
+            libglapi.so \
+            libc++_shared.so
+          do
+            test -s "$R/$f"
+            file "$R/$f"
+          done
 
-          file "$R"/*.so
+          echo
+          echo "=== libEGL_mesa.so dependencies ==="
 
           readelf -d \
             "$R/libEGL_mesa.so" \
             | grep NEEDED \
             || true
 
+          echo
+          echo "=== libgallium_dri.so dependencies ==="
+
+          readelf -d \
+            "$R/libgallium_dri.so" \
+            | grep NEEDED \
+            || true
+
       # ============================================================
-      # 15. Configure renderer plugin
+      # 14. Configure renderer plugin
       # ============================================================
 
       - name: Configure renderer plugin
@@ -455,120 +485,153 @@ jobs:
           from pathlib import Path
 
           p = Path("app/build.gradle.kts")
-          s = p.read_text()
 
-          s = s.replace(
-              'applicationId = "com.launchers_plugin.renderer"',
-              'applicationId = "com.iomc.myturnipzink.renderer"'
-          )
+          p.write_text(r'''
+          import com.launchers_plugin.renderer.buildscript.buildJsonValue
+          import com.launchers_plugin.renderer.buildscript.buildEnvs
+          import com.launchers_plugin.renderer.buildscript.legacyManifest
+          import com.launchers_plugin.renderer.buildscript.nativePath
+          import com.launchers_plugin.renderer.buildscript.renderer
 
-          s = s.replace(
-              'versionCode = 1',
-              'versionCode = 26203'
-          )
+          import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
-          s = s.replace(
-              'versionName = "1.0"',
-              'versionName = "26.2.3-zink"'
-          )
+          plugins {
+              id("com.launchers_plugin.renderer.dsl")
+              alias(libs.plugins.android.application)
+              id("com.google.devtools.ksp")
+              id("kotlinx-serialization")
+          }
 
-          s = s.replace(
-              'resValue("string","app_name","XXX Renderer")',
-              'resValue("string","app_name","MyTurnipZink Renderer 26.2.3")'
-          )
+          android {
+              namespace = "com.launchers_plugin.renderer"
+              compileSdk = 34
 
-          s = s.replace(
-              'applicationIdSuffix = ".xxx"',
-              ''
-          )
-
-          start = s.find(
-              'resValue("string", "config", buildJsonValue {'
-          )
-
-          if start == -1:
-              raise SystemExit(
-                  "Renderer config block was not found"
-              )
-
-          marker = '\n\n            // 兼容旧版渲染器插件架构'
-
-          end = s.find(marker, start)
-
-          if end == -1:
-              raise SystemExit(
-                  "Legacy renderer marker was not found"
-              )
-
-          new_block = r'''resValue("string", "config", buildJsonValue {
-              renderer(
-                  displayName = "MyTurnipZink | Mesa 26.2.3",
-                  rendererId = "myturnipzink",
-                  rendererGLPath = "libglxshim.so",
-                  rendererEGLPath = nativePath("libEGL_mesa.so"),
-                  dlopenLibPaths = listOf(
-                      nativePath("libglapi.so"),
-                      nativePath("libgallium_dri.so"),
-                      nativePath("libzink_dri.so"),
-                  ),
-                  env = buildEnvs {
-                      normal("LIBGL_ES", "3")
-                      normal("MESA_LOADER_DRIVER_OVERRIDE", "zink")
-                      normal("POJAVEXEC_EGL", nativePath("libEGL_mesa.so"))
-                  },
-                  minMCVer = null,
-                  maxMCVer = null,
-              )
-          })'''
-
-          s = s[:start] + new_block + s[end:]
-
-          legacy_start = s.find(
-              'manifestPlaceholders.putAll(legacyManifest {'
-          )
-
-          if legacy_start != -1:
-              legacy_end = s.find(
-                  '            })',
-                  legacy_start
-              )
-
-              if legacy_end != -1:
-                  legacy_end += len('            })')
-
-                  legacy = r'''manifestPlaceholders.putAll(legacyManifest {
-              displayName  = "MyTurnipZink | Mesa 26.2.3"
-              rendererName = "MyTurnipZink"
-              rendererLib  = "libglxshim.so"
-              eglLib       = "/libEGL_mesa.so"
-
-              minMCVer = ""
-              maxMCVer = ""
-
-              boatEnv {
-                  put("LIBGL_ES", "3")
-                  put("MESA_LOADER_DRIVER_OVERRIDE", "zink")
-                  put("POJAVEXEC_EGL", "libEGL_mesa.so")
-                  put(
-                      "DLOPEN",
-                      "libglapi.so,libgallium_dri.so,libzink_dri.so"
-                  )
+              defaultConfig {
+                  applicationId = "com.iomc.myturnipzink.renderer"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 26203
+                  versionName = "26.2.3-zink"
               }
 
-              pojavEnv {
-                  put("LIBGL_ES", "3")
-                  put("MESA_LOADER_DRIVER_OVERRIDE", "zink")
-                  put("POJAVEXEC_EGL", "libEGL_mesa.so")
-                  put(
-                      "DLOPEN",
-                      "libglapi.so,libgallium_dri.so,libzink_dri.so"
-                  )
+              buildFeatures {
+                  resValues = true
               }
-          })'''
 
-                  s = s[:legacy_start] + legacy + s[legacy_end:]
+              packagingOptions {
+                  jniLibs {
+                      useLegacyPackaging = true
+                  }
+              }
 
-          p.write_text(s)
+              buildTypes {
+                  release {
+                      isMinifyEnabled = true
+                      isShrinkResources = true
+                  }
+
+                  configureEach {
+                      resValue(
+                          "string",
+                          "app_name",
+                          "MyTurnipZink Renderer 26.2.3"
+                      )
+
+                      resValue(
+                          "string",
+                          "config",
+                          buildJsonValue {
+                              renderer(
+                                  displayName = "MyTurnipZink | Mesa 26.2.3",
+                                  rendererId = "myturnipzink",
+                                  rendererGLPath = nativePath("libglxshim.so"),
+                                  rendererEGLPath = nativePath("libEGL_mesa.so"),
+                                  dlopenLibPaths = listOf(
+                                      nativePath("libc++_shared.so"),
+                                      nativePath("libglapi.so"),
+                                      nativePath("libgallium_dri.so"),
+                                      nativePath("libzink_dri.so"),
+                                  ),
+                                  env = buildEnvs {
+                                      normal("LIBGL_ES", "3")
+                                      normal(
+                                          "MESA_LOADER_DRIVER_OVERRIDE",
+                                          "zink"
+                                      )
+                                      normal(
+                                          "POJAVEXEC_EGL",
+                                          nativePath("libEGL_mesa.so")
+                                      )
+                                  },
+                                  minMCVer = null,
+                                  maxMCVer = null,
+                              )
+                          }
+                      )
+
+                      manifestPlaceholders.putAll(
+                          legacyManifest {
+                              displayName = "MyTurnipZink | Mesa 26.2.3"
+                              rendererName = "MyTurnipZink"
+                              rendererLib = "libglxshim.so"
+                              eglLib = "/libEGL_mesa.so"
+                              minMCVer = ""
+                              maxMCVer = ""
+
+                              boatEnv {
+                                  put("LIBGL_ES", "3")
+                                  put(
+                                      "MESA_LOADER_DRIVER_OVERRIDE",
+                                      "zink"
+                                  )
+                                  put(
+                                      "POJAVEXEC_EGL",
+                                      "libEGL_mesa.so"
+                                  )
+                                  put(
+                                      "DLOPEN",
+                                      "libc++_shared.so,libglapi.so,libgallium_dri.so,libzink_dri.so"
+                                  )
+                              }
+
+                              pojavEnv {
+                                  put("LIBGL_ES", "3")
+                                  put(
+                                      "MESA_LOADER_DRIVER_OVERRIDE",
+                                      "zink"
+                                  )
+                                  put(
+                                      "POJAVEXEC_EGL",
+                                      "libEGL_mesa.so"
+                                  )
+                                  put(
+                                      "DLOPEN",
+                                      "libc++_shared.so,libglapi.so,libgallium_dri.so,libzink_dri.so"
+                                  )
+                              }
+                          }
+                      )
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_1_8
+                  targetCompatibility = JavaVersion.VERSION_1_8
+              }
+          }
+
+          kotlin {
+              compilerOptions {
+                  jvmTarget.set(JvmTarget.JVM_1_8)
+              }
+          }
+
+          dependencies {
+              implementation(libs.androidx.annotation)
+          }
+          ''')
+
+          print(p.read_text())
           PY
 
           cd "$R"
@@ -578,7 +641,7 @@ jobs:
             app/build.gradle.kts
 
       # ============================================================
-      # 16. Build renderer APK
+      # 15. Build renderer APK
       # ============================================================
 
       - name: Build renderer APK
@@ -594,7 +657,7 @@ jobs:
             assembleDebug
 
       # ============================================================
-      # 17. Verify renderer APK
+      # 16. Verify renderer APK
       # ============================================================
 
       - name: Verify renderer APK
@@ -618,54 +681,64 @@ jobs:
           sha256sum "$APK"
 
           echo
-          echo "=== Renderer libraries ==="
+          echo "=== Native libraries in APK ==="
 
           unzip -l "$APK" \
             | grep 'lib/arm64-v8a/' \
             | sort
 
-          unzip -l "$APK" \
-            | grep -q \
-              'lib/arm64-v8a/libEGL_mesa.so'
-
-          unzip -l "$APK" \
-            | grep -q \
-              'lib/arm64-v8a/libgallium_dri.so'
-
-          unzip -l "$APK" \
-            | grep -q \
-              'lib/arm64-v8a/libzink_dri.so'
+          for lib in \
+            libEGL_mesa.so \
+            libgallium_dri.so \
+            libzink_dri.so \
+            libglapi.so \
+            libc++_shared.so
+          do
+            unzip -l "$APK" \
+              | grep -q "lib/arm64-v8a/$lib"
+          done
 
       # ============================================================
-      # 18. Prepare Turnip FCL DRIVER plugin
+      # 17. Turnip DRIVER plugin
       #
       # IMPORTANT:
       #
-      # Zalith Launcher 2 DriverPluginManager requires:
+      # DO NOT use ZalithLauncher/NativeLibPlugin here.
       #
-      #   fclPlugin=true
-      #   driver=Turnip
+      # ZalithLauncher 2 DriverPluginManager requires:
       #
-      # It does NOT use:
+      #   fclPlugin = true
+      #   driver = <name>
       #
-      #   FCLNativePlugin=true
-      #   environment=...
-      #
-      # for Vulkan driver discovery.
+      # The FCLDriverPlugin template already has exactly this format.
       # ============================================================
 
-      - name: Prepare Turnip Driver Plugin
+      - name: Clone FCLDriverPlugin
         run: |
           set -eux
 
-          T="$WORK_ROOT/TurnipDriverPlugin"
+          cd "$WORK_ROOT"
 
-          rm -rf "$T"
+          git clone \
+            https://github.com/FCL-Team/FCLDriverPlugin.git \
+            FCLDriverPlugin
+
+          cd FCLDriverPlugin
+
+          git checkout "$FCL_DRIVER_COMMIT"
+
+      # ============================================================
+      # 18. Prepare FCL Turnip driver
+      # ============================================================
+
+      - name: Prepare FCL Turnip driver
+        run: |
+          set -eux
+
+          T="$WORK_ROOT/FCLDriverPlugin"
 
           mkdir -p \
-            "$T/app/src/main/java/com/iomc/myturnipzink/turnip" \
-            "$T/app/src/main/jniLibs/arm64-v8a" \
-            "$T/app/src/main/res/values"
+            "$T/app/src/main/jniLibs/arm64-v8a"
 
           TURNIP_SO="$(find \
             "$WORK_ROOT/turnip-build" \
@@ -680,203 +753,6 @@ jobs:
             "$TURNIP_SO" \
             "$T/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so"
 
-          # --------------------------------------------------------
-          # settings.gradle.kts
-          # --------------------------------------------------------
-
-          cat > "$T/settings.gradle.kts" <<'EOF'
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-
-          dependencyResolutionManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-
-          rootProject.name = "TurnipDriverPlugin"
-
-          include(":app")
-          EOF
-
-          # --------------------------------------------------------
-          # root build.gradle.kts
-          #
-          # Same Android Gradle Plugin generation as the
-          # ZalithLauncher NativeLibPlugin template.
-          # --------------------------------------------------------
-
-          cat > "$T/build.gradle.kts" <<'EOF'
-          plugins {
-              id("com.android.application") version "8.5.1" apply false
-          }
-          EOF
-
-          # --------------------------------------------------------
-          # gradle.properties
-          # --------------------------------------------------------
-
-          cat > "$T/gradle.properties" <<'EOF'
-          org.gradle.jvmargs=-Xmx2048m
-          android.useAndroidX=true
-          android.nonTransitiveRClass=true
-          EOF
-
-          # --------------------------------------------------------
-          # app/build.gradle.kts
-          # --------------------------------------------------------
-
-          cat > "$T/app/build.gradle.kts" <<'EOF'
-          plugins {
-              id("com.android.application")
-          }
-
-          android {
-              namespace = "com.iomc.myturnipzink.turnip"
-
-              compileSdk = 34
-
-              defaultConfig {
-                  applicationId = "com.iomc.myturnipzink.turnip"
-
-                  minSdk = 26
-                  targetSdk = 34
-
-                  versionCode = 26203
-                  versionName = "26.2.3-turnip"
-              }
-
-              buildTypes {
-                  debug {
-                      isMinifyEnabled = false
-                  }
-
-                  release {
-                      isMinifyEnabled = false
-                  }
-              }
-
-              packaging {
-                  jniLibs {
-                      useLegacyPackaging = true
-                  }
-              }
-          }
-          EOF
-
-          # --------------------------------------------------------
-          # strings.xml
-          # --------------------------------------------------------
-
-          cat > \
-            "$T/app/src/main/res/values/strings.xml" \
-            <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <string name="app_name">MyTurnipZink Turnip 26.2.3</string>
-          </resources>
-          EOF
-
-          # --------------------------------------------------------
-          # AndroidManifest.xml
-          #
-          # THIS is the important fix.
-          #
-          # Zalith Launcher 2:
-          #
-          #   metaData["fclPlugin"] == true
-          #   metaData["driver"] != null
-          #
-          # Then launcher uses info.nativeLibraryDir.
-          # --------------------------------------------------------
-
-          cat > \
-            "$T/app/src/main/AndroidManifest.xml" \
-            <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-
-          <manifest
-              xmlns:android="http://schemas.android.com/apk/res/android">
-
-              <application
-                  android:allowBackup="false"
-                  android:extractNativeLibs="true"
-                  android:label="@string/app_name">
-
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true">
-
-                      <intent-filter>
-                          <action
-                              android:name="android.intent.action.MAIN" />
-
-                          <category
-                              android:name="android.intent.category.LAUNCHER" />
-                      </intent-filter>
-
-                  </activity>
-
-                  <!-- =================================================
-                       Zalith Launcher 2 FCL Driver Plugin
-                       ================================================= -->
-
-                  <meta-data
-                      android:name="fclPlugin"
-                      android:value="true" />
-
-                  <meta-data
-                      android:name="driver"
-                      android:value="Turnip" />
-
-              </application>
-
-          </manifest>
-          EOF
-
-          # --------------------------------------------------------
-          # MainActivity.java
-          #
-          # Java only, so this plugin does not need Kotlin.
-          # --------------------------------------------------------
-
-          cat > \
-            "$T/app/src/main/java/com/iomc/myturnipzink/turnip/MainActivity.java" \
-            <<'EOF'
-          package com.iomc.myturnipzink.turnip;
-
-          import android.app.Activity;
-          import android.os.Bundle;
-
-          public class MainActivity extends Activity {
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-                  finish();
-              }
-          }
-          EOF
-
-          # --------------------------------------------------------
-          # Diagnostics
-          # --------------------------------------------------------
-
-          echo "=== Turnip Driver project ==="
-
-          find "$T/app/src/main" \
-            -type f \
-            -print \
-            | sort
-
-          echo
-          echo "=== Turnip native library ==="
-
           ls -lh \
             "$T/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so"
 
@@ -884,35 +760,125 @@ jobs:
             "$T/app/src/main/jniLibs/arm64-v8a/libvulkan_freedreno.so"
 
       # ============================================================
-      # 19. Supply Gradle wrapper to Turnip driver project
+      # 19. Configure FCL Driver metadata
       # ============================================================
 
-      - name: Prepare Turnip Gradle wrapper
+      - name: Configure FCL Turnip driver
         run: |
           set -eux
 
-          R="$WORK_ROOT/RendererPlugin-v2"
-          T="$WORK_ROOT/TurnipDriverPlugin"
+          T="$WORK_ROOT/FCLDriverPlugin"
 
-          test -f "$R/gradlew"
-          test -d "$R/gradle"
+          python3 - <<'PY'
+          from pathlib import Path
 
-          cp \
-            "$R/gradlew" \
-            "$T/gradlew"
+          p = Path("app/build.gradle.kts")
+          s = p.read_text()
 
-          cp -r \
-            "$R/gradle" \
-            "$T/gradle"
+          # Keep the original namespace.
+          # MainActivity.kt belongs to:
+          # com.mio.plugin.renderer
+          #
+          # Only applicationId is changed.
+          s = s.replace(
+              'applicationId = "com.mio.plugin.renderer"',
+              'applicationId = "com.iomc.myturnipzink.turnip"'
+          )
 
-          chmod +x "$T/gradlew"
+          s = s.replace(
+              'versionCode = 1',
+              'versionCode = 26203'
+          )
+
+          s = s.replace(
+              'versionName = "1.0"',
+              'versionName = "26.2.3-turnip"'
+          )
+
+          s = s.replace(
+              'resValue("string","app_name","Turnip 24.3.2")',
+              'resValue("string","app_name","MyTurnipZink Turnip 26.2.3")'
+          )
+
+          s = s.replace(
+              'applicationIdSuffix = ".turnip2432"',
+              ''
+          )
+
+          s = s.replace(
+              'manifestPlaceholders["driver"] = "Turnip 24.3.2"',
+              'manifestPlaceholders["driver"] = "Turnip 26.2.3 | Adreno 618"'
+          )
+
+          p.write_text(s)
+
+          print(p.read_text())
+          PY
+
+          echo
+          echo "=== Driver Gradle configuration ==="
+
+          grep -nE \
+            'namespace|applicationId|versionCode|versionName|app_name|applicationIdSuffix|manifestPlaceholders.*driver' \
+            app/build.gradle.kts
+
+          # Keep MainActivity package and namespace untouched.
+          test -f \
+            app/src/main/java/com/mio/plugin/renderer/MainActivity.kt
+
+          grep -q \
+            '^package com.mio.plugin.renderer$' \
+            app/src/main/java/com/mio/plugin/renderer/MainActivity.kt
 
       # ============================================================
-      # 20. Build Turnip Driver APK
+      # 20. Verify Driver manifest BEFORE build
+      # ============================================================
+
+      - name: Verify FCL Driver source metadata
+        run: |
+          set -eux
+
+          T="$WORK_ROOT/FCLDriverPlugin"
+
+          MANIFEST="$T/app/src/main/AndroidManifest.xml"
+
+          test -f "$MANIFEST"
+
+          echo "=== AndroidManifest.xml ==="
+
+          cat "$MANIFEST"
+
+          grep -q \
+            'android:name="fclPlugin"' \
+            "$MANIFEST"
+
+          grep -q \
+            'android:value="true"' \
+            "$MANIFEST"
+
+          grep -q \
+            'android:name="driver"' \
+            "$MANIFEST"
+
+          grep -q \
+            'android:value="${driver}"' \
+            "$MANIFEST"
+
+          # This is deliberately NOT a NativeLibPlugin.
+          if grep -q \
+            'FCLNativePlugin' \
+            "$MANIFEST"
+          then
+            echo "ERROR: NativeLibPlugin metadata found!"
+            exit 1
+          fi
+
+      # ============================================================
+      # 21. Build Turnip Driver APK
       # ============================================================
 
       - name: Build Turnip Driver APK
-        working-directory: ${{ env.WORK_ROOT }}/TurnipDriverPlugin
+        working-directory: ${{ env.WORK_ROOT }}/FCLDriverPlugin
         run: |
           set -eux
 
@@ -924,14 +890,16 @@ jobs:
             assembleDebug
 
       # ============================================================
-      # 21. Verify Turnip Driver APK
+      # 22. Verify final Turnip Driver APK
       # ============================================================
 
       - name: Verify Turnip Driver APK
         run: |
           set -eux
 
-          D="$WORK_ROOT/TurnipDriverPlugin/app/build/outputs/apk/debug"
+          T="$WORK_ROOT/FCLDriverPlugin"
+
+          D="$T/app/build/outputs/apk/debug"
 
           APK="$(find "$D" \
             -maxdepth 1 \
@@ -942,34 +910,35 @@ jobs:
           test -n "$APK"
           test -s "$APK"
 
-          echo "=== Turnip Driver APK ==="
+          echo "=== Turnip APK ==="
 
           ls -lh "$APK"
           sha256sum "$APK"
 
           echo
-          echo "=== APK contents ==="
+          echo "=== APK native libraries ==="
 
           unzip -l "$APK" \
             | grep 'lib/arm64-v8a/' \
             | sort
 
-          echo
-          echo "=== Check Turnip library ==="
-
           unzip -l "$APK" \
             | grep -q \
               'lib/arm64-v8a/libvulkan_freedreno.so'
 
-          echo
-          echo "=== Android package ==="
+          # --------------------------------------------------------
+          # Android package metadata
+          # --------------------------------------------------------
 
           AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
+
+          echo
+          echo "=== AAPT badging ==="
 
           "$AAPT" dump badging "$APK"
 
           echo
-          echo "=== AndroidManifest.xml ==="
+          echo "=== APK manifest XML ==="
 
           "$AAPT" dump xmltree \
             "$APK" \
@@ -978,8 +947,12 @@ jobs:
 
           cat "$WORK_ROOT/turnip-manifest.txt"
 
+          # --------------------------------------------------------
+          # Required FCL driver metadata
+          # --------------------------------------------------------
+
           echo
-          echo "=== Required FCL Driver metadata ==="
+          echo "=== Required driver metadata ==="
 
           grep -q \
             'fclPlugin' \
@@ -990,35 +963,51 @@ jobs:
             "$WORK_ROOT/turnip-manifest.txt"
 
           grep -q \
-            'Turnip' \
+            'Turnip 26.2.3' \
             "$WORK_ROOT/turnip-manifest.txt"
 
-          echo
-          echo "=== Ensure wrong NativeLibPlugin metadata is absent ==="
+          # --------------------------------------------------------
+          # Required launcher activity
+          # --------------------------------------------------------
+
+          grep -q \
+            'android.intent.action.MAIN' \
+            "$WORK_ROOT/turnip-manifest.txt"
+
+          grep -q \
+            'android.intent.category.LAUNCHER' \
+            "$WORK_ROOT/turnip-manifest.txt"
+
+          # --------------------------------------------------------
+          # Must NOT be NativeLibPlugin
+          # --------------------------------------------------------
 
           if grep -q \
             'FCLNativePlugin' \
             "$WORK_ROOT/turnip-manifest.txt"
           then
             echo \
-              "ERROR: FCLNativePlugin metadata found in Turnip APK."
+              "ERROR: Turnip APK contains FCLNativePlugin metadata."
 
             exit 1
           fi
 
           echo
-          echo "Turnip FCL Driver metadata: OK"
+          echo "FCL Turnip Driver manifest: OK"
 
           echo "$APK" \
             > "$WORK_ROOT/turnip-apk-path.txt"
 
       # ============================================================
-      # 22. Package standalone Turnip ZIP
+      # 23. Standalone Turnip ZIP
       # ============================================================
 
       - name: Package standalone Turnip ZIP
         run: |
           set -eux
+
+          rm -rf \
+            "$WORK_ROOT/turnip-standalone"
 
           mkdir -p \
             "$WORK_ROOT/turnip-standalone/lib/arm64-v8a"
@@ -1047,7 +1036,7 @@ jobs:
             MyTurnipZink-Turnip-Driver.zip
 
       # ============================================================
-      # 23. Collect final artifacts
+      # 24. Collect final artifacts
       # ============================================================
 
       - name: Collect final artifacts
@@ -1078,7 +1067,7 @@ jobs:
             "$WORK_ROOT/MyTurnipZink-Turnip-Driver.apk"
 
           echo
-          echo "=== Final files ==="
+          echo "=== Final artifacts ==="
 
           ls -lh \
             "$WORK_ROOT/MyTurnipZink-Renderer.apk" \
@@ -1094,7 +1083,7 @@ jobs:
             "$WORK_ROOT/MyTurnipZink-Turnip-Driver.zip"
 
       # ============================================================
-      # 24. Upload renderer APK
+      # 25. Upload Renderer APK
       # ============================================================
 
       - name: Upload Renderer APK
@@ -1106,7 +1095,7 @@ jobs:
           retention-days: 90
 
       # ============================================================
-      # 25. Upload Turnip Driver APK
+      # 26. Upload Turnip Driver APK
       # ============================================================
 
       - name: Upload Turnip Driver APK
@@ -1118,7 +1107,7 @@ jobs:
           retention-days: 90
 
       # ============================================================
-      # 26. Upload standalone Turnip ZIP
+      # 27. Upload standalone Turnip ZIP
       # ============================================================
 
       - name: Upload standalone Turnip ZIP
@@ -1130,7 +1119,7 @@ jobs:
           retention-days: 90
 
       # ============================================================
-      # 27. Build summary
+      # 28. Build summary
       # ============================================================
 
       - name: Build summary
@@ -1143,19 +1132,26 @@ jobs:
             echo "## Mesa"
             echo "- Mesa: ${MESA_VERSION}"
             echo "- Zink/Kopper: enabled"
+            echo "- Turnip/Freedreno: enabled"
             echo
             echo "## Target"
             echo "- GPU: Adreno 618"
-            echo "- API: Vulkan / Turnip / Freedreno"
             echo "- ABI: arm64-v8a"
+            echo "- Minecraft: 26.1.2"
             echo
-            echo "## Turnip plugin format"
-            echo "- FCL Driver Plugin"
+            echo "## Renderer plugin"
+            echo "- RendererPlugin-v2"
+            echo "- Renderer ID: myturnipzink"
+            echo "- EGL: libEGL_mesa.so"
+            echo "- GL shim: libglxshim.so"
+            echo
+            echo "## Turnip driver plugin"
+            echo "- Template: FCLDriverPlugin"
             echo "- fclPlugin=true"
-            echo "- driver=Turnip"
+            echo "- driver=Turnip 26.2.3 | Adreno 618"
             echo "- NOT FCLNativePlugin"
             echo
-            echo "## Artifacts"
+            echo "## Final artifacts"
             echo "- MyTurnipZink-Renderer-APK"
             echo "- MyTurnipZink-Turnip-Driver-APK"
             echo "- MyTurnipZink-Turnip-Driver"
