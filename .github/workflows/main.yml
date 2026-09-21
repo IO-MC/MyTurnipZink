@@ -65,6 +65,7 @@ jobs:
             cmake \
             spirv-headers \
             spirv-tools \
+            glslang-tools \
             unzip \
             zip \
             wget \
@@ -86,6 +87,14 @@ jobs:
           echo "$MESON_VENV/bin" >> "$GITHUB_PATH"
           echo "VIRTUAL_ENV=$MESON_VENV" >> "$GITHUB_ENV"
           echo "PATH=$MESON_VENV/bin:$PATH" >> "$GITHUB_ENV"
+
+      - name: Verify shader tools
+        run: |
+         set -eux
+         command -v glslangValidator
+         glslangValidator --version
+         command -v spirv-as
+         spirv-as --version
 
       - name: Setup Java 21
         uses: actions/setup-java@v6
