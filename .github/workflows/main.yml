@@ -663,7 +663,7 @@ jobs:
       # 18. Verify renderer APK
       # ============================================================
 
-       - name: Verify renderer APK
+      - name: Verify renderer APK
         run: |
           set -eux
 
