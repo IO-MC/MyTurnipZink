@@ -998,10 +998,31 @@ jobs:
 
           PLUGIN_DIR="$WORK_ROOT/NativeLibPlugin"
 
-          test -f "$PLUGIN_DIR/app/build.gradle.kts"
-          test -f "$PLUGIN_DIR/app/src/main/AndroidManifest.xml"
+          BUILD_FILE="$PLUGIN_DIR/app/build.gradle.kts"
+          MANIFEST_FILE="$PLUGIN_DIR/app/src/main/AndroidManifest.xml"
 
-          python3 - "$PLUGIN_DIR/app/build.gradle.kts" <<'PY'
+          test -f "$BUILD_FILE"
+          test -f "$MANIFEST_FILE"
+
+          #
+          # IMPORTANT:
+          # Do NOT change namespace.
+          #
+          # NativeLibPlugin MainActivity.kt belongs to:
+          #   com.commonlauncher.nativeplugin
+          #
+          # It imports/uses:
+          #   com.commonlauncher.nativeplugin.R
+          #
+          # Therefore namespace must remain the original
+          # NativeLibPlugin namespace so Android generates R
+          # in the package expected by MainActivity.kt.
+          #
+          # Only applicationId is changed because that is the
+          # installable Android package identity.
+          #
+
+          python3 - "$BUILD_FILE" <<'PY'
           from pathlib import Path
           import re
           import sys
@@ -1009,46 +1030,61 @@ jobs:
           path = Path(sys.argv[1])
           text = path.read_text()
 
-          # Package / namespace
-          text = re.sub(
-              r'namespace\s*=\s*"[^"]+"',
-              'namespace = "com.iomc.myturnipzink.turnip"',
-              text,
-              count=1,
-          )
-
-          text = re.sub(
+          # KEEP the original namespace unchanged.
+          # Only replace applicationId.
+          text, n = re.subn(
               r'applicationId\s*=\s*"[^"]+"',
               'applicationId = "com.iomc.myturnipzink.turnip"',
               text,
               count=1,
           )
 
-          # Version
-          text = re.sub(
+          if n != 1:
+              raise SystemExit(
+                  "Expected exactly one applicationId entry"
+              )
+
+          text, n = re.subn(
               r'versionCode\s*=\s*\d+',
               'versionCode = 26203',
               text,
               count=1,
           )
 
-          text = re.sub(
+          if n != 1:
+              raise SystemExit(
+                  "Expected exactly one versionCode entry"
+              )
+
+          text, n = re.subn(
               r'versionName\s*=\s*"[^"]+"',
               'versionName = "26.2.3-turnip"',
               text,
               count=1,
           )
 
+          if n != 1:
+              raise SystemExit(
+                  "Expected exactly one versionName entry"
+              )
+
           path.write_text(text)
           PY
 
-          python3 - "$PLUGIN_DIR/app/src/main/AndroidManifest.xml" <<'PY'
+          #
+          # Update plugin metadata without changing the Java/Kotlin
+          # source package or namespace.
+          #
+
+          python3 - "$MANIFEST_FILE" <<'PY'
           from pathlib import Path
           import sys
 
           path = Path(sys.argv[1])
           text = path.read_text()
 
+          # Keep the existing NativeLibPlugin metadata structure.
+          # Only replace user-visible label when present.
           text = text.replace(
               'android:label="@string/app_name"',
               'android:label="MyTurnipZink Turnip 26.2.3"',
@@ -1062,14 +1098,68 @@ jobs:
           path.write_text(text)
           PY
 
-          # Kiểm tra cấu hình sau khi patch.
-          echo "===== build.gradle.kts ====="
-          grep -nE 'namespace|applicationId|versionCode|versionName' \
-            "$PLUGIN_DIR/app/build.gradle.kts" || true
+          echo "===== Turnip build.gradle.kts ====="
 
-          echo "===== AndroidManifest.xml ====="
-          grep -nE 'manifest|application|FCLNativePlugin|label|des|environment|minMCVer|maxMCVer' \
-            "$PLUGIN_DIR/app/src/main/AndroidManifest.xml" || true
+          grep -nE \
+            'namespace|applicationId|versionCode|versionName' \
+            "$BUILD_FILE"
+
+          echo
+          echo "===== Turnip AndroidManifest.xml ====="
+
+          grep -nE \
+            'manifest|application|FCLNativePlugin|label|des|environment|minMCVer|maxMCVer' \
+            "$MANIFEST_FILE" || true
+
+          echo
+          echo "===== Verify namespace was NOT replaced ====="
+
+          NAMESPACE_LINE="$(
+            grep -E \
+              '^[[:space:]]*namespace[[:space:]]*=' \
+              "$BUILD_FILE" \
+              | head -n1
+          )"
+
+          echo "$NAMESPACE_LINE"
+
+          echo
+          echo "===== Verify applicationId ====="
+
+          grep -E \
+            '^[[:space:]]*applicationId[[:space:]]*=' \
+            "$BUILD_FILE"
+
+          #
+          # Critical sanity check:
+          # MainActivity uses com.commonlauncher.nativeplugin.R,
+          # therefore namespace must stay com.commonlauncher.nativeplugin.
+          #
+
+          echo "$NAMESPACE_LINE" \
+            | grep -q \
+              'com.commonlauncher.nativeplugin'
+
+          grep -E \
+            '^[[:space:]]*applicationId[[:space:]]*=' \
+            "$BUILD_FILE" \
+            | grep -q \
+              'com.iomc.myturnipzink.turnip'
+
+          grep -E \
+            '^[[:space:]]*versionCode[[:space:]]*=' \
+            "$BUILD_FILE" \
+            | grep -q \
+              '26203'
+
+          grep -E \
+            '^[[:space:]]*versionName[[:space:]]*=' \
+            "$BUILD_FILE" \
+            | grep -q \
+              '26.2.3-turnip'
+
+          echo
+          echo "Turnip NativeLibPlugin configuration OK."
 
       - name: Build Turnip APK
         working-directory: ${{ env.WORK_ROOT }}/NativeLibPlugin
@@ -1077,6 +1167,34 @@ jobs:
           set -eux
 
           chmod +x ./gradlew
+
+          echo "===== Verify NativeLibPlugin Kotlin package ====="
+
+          grep -nE \
+            'package |import .*\.R' \
+            app/src/main/java/com/commonlauncher/nativeplugin/MainActivity.kt \
+            || true
+
+          echo
+          echo "===== Verify Android namespace ====="
+
+          grep -nE \
+            'namespace[[:space:]]*=' \
+            app/build.gradle.kts
+
+          grep -E \
+            'namespace[[:space:]]*=[[:space:]]*"com\.commonlauncher\.nativeplugin"' \
+            app/build.gradle.kts
+
+          echo
+          echo "===== Verify Android applicationId ====="
+
+          grep -E \
+            'applicationId[[:space:]]*=[[:space:]]*"com\.iomc\.myturnipzink\.turnip"' \
+            app/build.gradle.kts
+
+          echo
+          echo "===== Build Turnip APK ====="
 
           ./gradlew \
             --no-daemon \
