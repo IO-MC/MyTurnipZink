@@ -19,6 +19,7 @@ jobs:
       RENDERER_PLUGIN_COMMIT: "1591ff84c3ddda0c95ae1e72ef1f6608cb331b7d"
       WORK_ROOT: ${{ github.workspace }}/work
       ANDROID_NDK_VERSION: "27.2.12479018"
+      MESON_VENV: ${{ github.workspace }}/meson-venv
 
     steps:
 
