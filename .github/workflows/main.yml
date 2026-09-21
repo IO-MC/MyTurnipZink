@@ -34,8 +34,11 @@ jobs:
       # ============================================================
 
       - name: Install build dependencies
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
+
+          echo "=== Installing build dependencies ==="
 
           sudo apt-get update
 
@@ -101,14 +104,17 @@ jobs:
             xz-utils \
             zip
 
-          # Mesa 26.2.3 requires Meson >= 1.4.0.
-          # Do not rely on Ubuntu's system Meson package because it can
-          # provide an older version (for example 1.3.2).
+          echo "=== Creating isolated Meson virtual environment ==="
+
           rm -rf "$MESON_VENV"
 
           python3 -m venv "$MESON_VENV"
 
+          echo "=== Upgrading pip inside Meson venv ==="
+
           "$MESON_VENV/bin/python" -m pip install --upgrade pip
+
+          echo "=== Installing Meson and Python build dependencies ==="
 
           "$MESON_VENV/bin/python" -m pip install \
             "meson>=1.4,<2.0" \
@@ -116,20 +122,41 @@ jobs:
             PyYAML \
             packaging
 
-          # Make the venv Meson/Python the default for all following steps.
-          echo "$MESON_VENV/bin" >> "$GITHUB_PATH"
-          echo "VIRTUAL_ENV=$MESON_VENV" >> "$GITHUB_ENV"
-          echo "PATH=$MESON_VENV/bin:$PATH" >> "$GITHUB_ENV"
+          echo "=== Activating Meson venv ==="
 
-          # Verify that the workflow is using the venv Meson.
-          echo "Meson path:"
+          # Make Meson available to all following GitHub Actions steps.
+          echo "$MESON_VENV/bin" >> "$GITHUB_PATH"
+
+          # Keep the virtual environment information for following steps.
+          echo "VIRTUAL_ENV=$MESON_VENV" >> "$GITHUB_ENV"
+
+          # Also activate it for THIS step.
+          export VIRTUAL_ENV="$MESON_VENV"
+          export PATH="$MESON_VENV/bin:$PATH"
+
+          echo "=== Verifying Meson installation ==="
+
+          echo "MESON_VENV=$MESON_VENV"
+          echo "VIRTUAL_ENV=$VIRTUAL_ENV"
+
+          echo "Meson executable:"
           command -v meson
 
           echo "Meson version:"
           meson --version
 
-          echo "Meson Python module:"
-          python3 -c 'import mesonbuild; print(mesonbuild.__version__)'
+          echo "Python executable:"
+          command -v python3
+
+          echo "Python version:"
+          python3 --version
+
+          echo "=== Verifying Meson Python module ==="
+
+          "$MESON_VENV/bin/python" -c \
+            'import mesonbuild; print("mesonbuild module: OK")'
+
+          echo "=== Build dependencies installation complete ==="
           
       # ============================================================
       # 3. Verify shader / LLVM tools
